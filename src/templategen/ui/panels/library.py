@@ -9,3 +9,4 @@ class LibraryPanel(QWidget):
     def __init__(self, session: EditorSession) -> None:
         super().__init__()
         self._session = session
+        self.setMinimumWidth(240)

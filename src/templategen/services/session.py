@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from templategen.model.template import Template
     from templategen.services.commands import Command
 

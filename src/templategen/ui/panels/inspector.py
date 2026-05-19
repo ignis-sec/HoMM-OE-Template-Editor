@@ -9,6 +9,7 @@ class Inspector(QWidget):
     def __init__(self, session: EditorSession) -> None:
         super().__init__()
         self._session = session
+        self.setMinimumWidth(300)
 
     def set_target(self, target: object | None) -> None:
         raise NotImplementedError
