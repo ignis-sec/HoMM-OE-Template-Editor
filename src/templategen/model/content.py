@@ -1,0 +1,39 @@
+"""Mandatory content, placement rules, and content count limits."""
+
+from pydantic import BaseModel
+
+
+class RuleAnchor(BaseModel): ...
+
+
+class MainObjectAnchor(RuleAnchor): ...
+
+
+class ConnectionAnchor(RuleAnchor): ...
+
+
+class CrossroadsAnchor(RuleAnchor): ...
+
+
+class RoadAnchor(RuleAnchor): ...
+
+
+class SidAnchor(RuleAnchor): ...
+
+
+class MandatoryContentAnchor(RuleAnchor): ...
+
+
+class PlacementRule(BaseModel): ...
+
+
+class ContentItem(BaseModel): ...
+
+
+class MandatoryContentBundle(BaseModel): ...
+
+
+class LimitItem(BaseModel): ...
+
+
+class ContentCountLimit(BaseModel): ...
