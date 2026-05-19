@@ -1,22 +1,67 @@
-"""EdgeItem — graphics edge representing one Connection between two zones."""
+"""EdgeItem — line between two ZoneItems, styled per connection type."""
 
-from PySide6.QtCore import QRectF
-from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QGraphicsObject, QStyleOptionGraphicsItem, QWidget
+from typing import Final
 
-from templategen.model.connection import Connection
+from PySide6.QtCore import QLineF, QRectF, Qt
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QStyleOptionGraphicsItem, QWidget
+
+from templategen.model.connection import (
+    DirectConnection,
+    GladiatorArenaConnection,
+    PortalConnection,
+    ProximityConnection,
+)
+from templategen.model.enums import ConnectionType
 from templategen.ui.canvas.zone_item import ZoneItem
+
+_StyledConnection = DirectConnection | PortalConnection | ProximityConnection | GladiatorArenaConnection
+
+_DEFAULT_PEN: Final[QPen] = QPen(QColor("#bcbcc4"), 1.8)
+_PORTAL_PEN: Final[QPen] = QPen(QColor("#c8a0ff"), 1.8, Qt.PenStyle.DashLine)
+_PROXIMITY_PEN: Final[QPen] = QPen(QColor("#5b6068"), 1.0, Qt.PenStyle.DotLine)
+_ARENA_PEN: Final[QPen] = QPen(QColor("#e07070"), 3.0)
+
+
+def _pen_for(connection: _StyledConnection) -> QPen:
+    match connection.connectionType:
+        case ConnectionType.PORTAL:
+            return _PORTAL_PEN
+        case ConnectionType.PROXIMITY:
+            return _PROXIMITY_PEN
+        case ConnectionType.GLADIATOR_ARENA:
+            return _ARENA_PEN
+        case _:
+            return _DEFAULT_PEN
 
 
 class EdgeItem(QGraphicsObject):
-    def __init__(self, connection: Connection, source: ZoneItem, target: ZoneItem) -> None:
+    def __init__(self, connection: _StyledConnection, source: ZoneItem, target: ZoneItem) -> None:
         super().__init__()
         self._connection = connection
         self._source = source
         self._target = target
+        self._pen = _pen_for(connection)
+        self.setZValue(-1)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setToolTip(connection.name or f"{connection.from_} → {connection.to}")
+        source.add_edge(self)
+        target.add_edge(self)
+
+    @property
+    def model_target(self) -> _StyledConnection:
+        return self._connection
+
+    def update_endpoints(self) -> None:
+        self.prepareGeometryChange()
+        self.update()
+
+    def _line(self) -> QLineF:
+        return QLineF(self._source.center(), self._target.center())
 
     def boundingRect(self) -> QRectF:
-        raise NotImplementedError
+        line = self._line()
+        return QRectF(line.p1(), line.p2()).normalized().adjusted(-6, -6, 6, 6)
 
     def paint(
         self,
@@ -24,4 +69,10 @@ class EdgeItem(QGraphicsObject):
         option: QStyleOptionGraphicsItem,
         widget: QWidget | None = None,
     ) -> None:
-        raise NotImplementedError
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(self._pen)
+        if self.isSelected():
+            pen.setColor(QColor("#fff"))
+            pen.setWidthF(pen.widthF() + 1.0)
+        painter.setPen(pen)
+        painter.drawLine(self._line())

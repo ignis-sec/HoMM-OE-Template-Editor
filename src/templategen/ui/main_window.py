@@ -1,10 +1,12 @@
 """Main application window — wires menus, toolbar, docks, and status bar."""
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
-    QFrame,
+    QFileDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -14,9 +16,12 @@ from PySide6.QtWidgets import (
 )
 
 from templategen.services.session import EditorSession
+from templategen.ui.canvas.graph_scene import GraphScene
+from templategen.ui.canvas.graph_view import GraphView
 from templategen.ui.icons import IconRegistry
 from templategen.ui.panels.inspector import Inspector
 from templategen.ui.panels.library import LibraryPanel
+from templategen.ui.panels.variant_tabs import VariantTabBar
 
 
 class MainWindow(QMainWindow):
@@ -29,11 +34,14 @@ class MainWindow(QMainWindow):
         self.resize(1400, 900)
 
         self._build_actions()
-        self._build_central_placeholder()
+        self._build_central()
         self._build_menus()
         self._build_toolbar()
         self._build_docks()
         self._build_statusbar()
+
+        session.template_changed.connect(self._on_template_changed)
+        session.current_variant_changed.connect(self._update_variant_label)
 
     def _build_actions(self) -> None:
         self.action_new = QAction(self._icons.get("new"), "&New Template", self)
@@ -42,7 +50,7 @@ class MainWindow(QMainWindow):
 
         self.action_open = QAction(self._icons.get("open"), "&Open…", self)
         self.action_open.setShortcut(QKeySequence.StandardKey.Open)
-        self.action_open.triggered.connect(self._not_implemented)
+        self.action_open.triggered.connect(self._on_open)
 
         self.action_save = QAction(self._icons.get("save"), "&Save", self)
         self.action_save.setShortcut(QKeySequence.StandardKey.Save)
@@ -83,18 +91,20 @@ class MainWindow(QMainWindow):
         self.action_about_qt = QAction("About &Qt", self)
         self.action_about_qt.triggered.connect(lambda: QMessageBox.aboutQt(self))
 
-    def _build_central_placeholder(self) -> None:
-        placeholder = QFrame()
-        placeholder.setFrameShape(QFrame.Shape.StyledPanel)
+    def _build_central(self) -> None:
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        label = QLabel("Canvas placeholder")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("color: #6e6e6e; font-size: 14px;")
+        self._variant_tabs = VariantTabBar(self._session)
+        self._graph_scene = GraphScene(self._session)
+        self._graph_view = GraphView(self._graph_scene)
 
-        layout = QVBoxLayout(placeholder)
-        layout.addWidget(label)
+        layout.addWidget(self._variant_tabs)
+        layout.addWidget(self._graph_view, stretch=1)
 
-        self.setCentralWidget(placeholder)
+        self.setCentralWidget(central)
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
@@ -167,8 +177,46 @@ class MainWindow(QMainWindow):
     def _build_statusbar(self) -> None:
         bar = self.statusBar()
         bar.showMessage("Ready")
-        self._variant_label = QLabel("Variant — of —")
+        self._variant_label = QLabel("No template")
         bar.addPermanentWidget(self._variant_label)
+
+    def _on_open(self) -> None:
+        examples = Path.cwd() / "example-templates"
+        default_dir = str(examples if examples.exists() else Path.cwd())
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Template",
+            default_dir,
+            "RMG Templates (*.rmg.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            self._session.load(Path(path))
+        except Exception as exc:
+            QMessageBox.critical(self, "Open failed", f"Could not load template:\n\n{exc}")
+
+    def _on_template_changed(self) -> None:
+        template = self._session.template
+        path = self._session.path
+        name = path.name if path else "Untitled"
+        self.setWindowTitle(f"TemplateGenerator — {name}")
+        if template is not None:
+            self.statusBar().showMessage(
+                f"Loaded {name}: {len(template.variants)} variant(s), "
+                f"{len(template.zoneLayouts)} layout(s)",
+                4000,
+            )
+        self._update_variant_label()
+
+    def _update_variant_label(self, _index: int | None = None) -> None:
+        template = self._session.template
+        if template is None or not template.variants:
+            self._variant_label.setText("No template")
+            return
+        cur = self._session.current_variant_index + 1
+        total = len(template.variants)
+        self._variant_label.setText(f"Variant {cur} of {total}")
 
     def _not_implemented(self) -> None:
         self.statusBar().showMessage("Not implemented yet", 2500)

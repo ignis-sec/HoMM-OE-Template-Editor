@@ -54,8 +54,9 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 [lint.per-file-ignores]
 # Tests: allow assert, unused fixture args, magic numbers.
 "tests/**/*.py" = ["S101", "ARG", "PLR2004"]
-# Qt subclasses use camelCase method overrides (e.g. mousePressEvent).
-"src/templategen/ui/**/*.py" = ["N802", "N803"]
+# Qt subclasses use camelCase method overrides (e.g. mousePressEvent), and many
+# overridden signatures are fixed by Qt — option/widget on QGraphicsItem.paint, etc.
+"src/templategen/ui/**/*.py" = ["N802", "N803", "ARG002"]
 # Pydantic models: camelCase fields, `type` discriminator, list-default fields (Pydantic copies per instance).
 "src/templategen/model/**/*.py" = ["A003", "N815", "RUF012"]
 # Scratch scripts: don't lint.

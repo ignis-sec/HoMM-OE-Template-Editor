@@ -1,14 +1,60 @@
-"""GraphScene — binds the current Variant's zones and connections to graphics items."""
+"""GraphScene — binds the current Variant to draggable ZoneItems and EdgeItems."""
 
+from typing import Final
+
+import networkx as nx
 from PySide6.QtWidgets import QGraphicsScene
 
 from templategen.services.session import EditorSession
+from templategen.ui.canvas.connection_item import EdgeItem
+from templategen.ui.canvas.zone_item import ZoneItem
+
+_SCENE_SIZE: Final[float] = 1200.0
+_LAYOUT_SCALE: Final[float] = 500.0
+_LAYOUT_SEED: Final[int] = 42
 
 
 class GraphScene(QGraphicsScene):
     def __init__(self, session: EditorSession) -> None:
         super().__init__()
         self._session = session
+        self._zone_items: dict[str, ZoneItem] = {}
+
+        self.setSceneRect(-_SCENE_SIZE / 2, -_SCENE_SIZE / 2, _SCENE_SIZE, _SCENE_SIZE)
+
+        session.template_changed.connect(self.rebuild)
+        session.current_variant_changed.connect(self.rebuild)
+        self.selectionChanged.connect(self._forward_selection)
 
     def rebuild(self) -> None:
-        raise NotImplementedError
+        self.clear()
+        self._zone_items.clear()
+
+        template = self._session.template
+        if not template or not template.variants:
+            return
+        variant = template.variants[self._session.current_variant_index]
+
+        graph = nx.Graph()
+        for zone in variant.zones:
+            graph.add_node(zone.name)
+        for conn in variant.connections:
+            graph.add_edge(conn.from_, conn.to)
+
+        positions = nx.spring_layout(graph, seed=_LAYOUT_SEED, k=1.5)
+
+        for zone in variant.zones:
+            x, y = positions[zone.name]
+            item = ZoneItem(zone)
+            item.setPos(x * _LAYOUT_SCALE, y * _LAYOUT_SCALE)
+            self.addItem(item)
+            self._zone_items[zone.name] = item
+
+        for conn in variant.connections:
+            edge = EdgeItem(conn, self._zone_items[conn.from_], self._zone_items[conn.to])
+            self.addItem(edge)
+
+    def _forward_selection(self) -> None:
+        items = self.selectedItems()
+        target = getattr(items[0], "model_target", None) if items else None
+        self._session.set_selection(target)
