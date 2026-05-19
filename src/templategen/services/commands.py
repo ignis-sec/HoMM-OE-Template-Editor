@@ -2,64 +2,79 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from PySide6.QtGui import QUndoCommand
 
 if TYPE_CHECKING:
     from templategen.services.session import EditorSession
 
 
-class Command(ABC):
-    @abstractmethod
-    def do(self, session: EditorSession) -> None: ...
+class Command(QUndoCommand):
+    def __init__(self, session: EditorSession, text: str) -> None:
+        super().__init__(text)
+        self._session = session
 
-    @abstractmethod
-    def undo(self, session: EditorSession) -> None: ...
+
+class EditFieldCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        target: object,
+        field: str,
+        new_value: Any,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Edit {field}")
+        self._target = target
+        self._field = field
+        self._new = new_value
+        self._old = getattr(target, field)
+
+    def redo(self) -> None:
+        setattr(self._target, self._field, self._new)
+        self._session.model_object_changed.emit(self._target)
+
+    def undo(self) -> None:
+        setattr(self._target, self._field, self._old)
+        self._session.model_object_changed.emit(self._target)
 
 
 class AddZoneCommand(Command):
-    def do(self, session: EditorSession) -> None:
+    def redo(self) -> None:
         raise NotImplementedError
 
-    def undo(self, session: EditorSession) -> None:
+    def undo(self) -> None:
         raise NotImplementedError
 
 
 class RemoveZoneCommand(Command):
-    def do(self, session: EditorSession) -> None:
+    def redo(self) -> None:
         raise NotImplementedError
 
-    def undo(self, session: EditorSession) -> None:
+    def undo(self) -> None:
         raise NotImplementedError
 
 
 class MoveZoneCommand(Command):
-    def do(self, session: EditorSession) -> None:
+    def redo(self) -> None:
         raise NotImplementedError
 
-    def undo(self, session: EditorSession) -> None:
+    def undo(self) -> None:
         raise NotImplementedError
 
 
 class ConnectZonesCommand(Command):
-    def do(self, session: EditorSession) -> None:
+    def redo(self) -> None:
         raise NotImplementedError
 
-    def undo(self, session: EditorSession) -> None:
+    def undo(self) -> None:
         raise NotImplementedError
 
 
 class DisconnectZonesCommand(Command):
-    def do(self, session: EditorSession) -> None:
+    def redo(self) -> None:
         raise NotImplementedError
 
-    def undo(self, session: EditorSession) -> None:
-        raise NotImplementedError
-
-
-class EditFieldCommand(Command):
-    def do(self, session: EditorSession) -> None:
-        raise NotImplementedError
-
-    def undo(self, session: EditorSession) -> None:
+    def undo(self) -> None:
         raise NotImplementedError

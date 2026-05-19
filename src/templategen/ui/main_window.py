@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -42,6 +42,13 @@ class MainWindow(QMainWindow):
 
         session.template_changed.connect(self._on_template_changed)
         session.current_variant_changed.connect(self._update_variant_label)
+        session.dirty_changed.connect(self._update_title)
+        session.undo_available_changed.connect(self.action_undo.setEnabled)
+        session.redo_available_changed.connect(self.action_redo.setEnabled)
+
+        self.action_undo.setEnabled(False)
+        self.action_redo.setEnabled(False)
+        self.action_save.setEnabled(True)
 
     def _build_actions(self) -> None:
         self.action_new = QAction(self._icons.get("new"), "&New Template", self)
@@ -54,11 +61,11 @@ class MainWindow(QMainWindow):
 
         self.action_save = QAction(self._icons.get("save"), "&Save", self)
         self.action_save.setShortcut(QKeySequence.StandardKey.Save)
-        self.action_save.triggered.connect(self._not_implemented)
+        self.action_save.triggered.connect(self._on_save)
 
         self.action_save_as = QAction(self._icons.get("save_as"), "Save &As…", self)
         self.action_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
-        self.action_save_as.triggered.connect(self._not_implemented)
+        self.action_save_as.triggered.connect(self._on_save_as)
 
         self.action_exit = QAction(self._icons.get("exit"), "E&xit", self)
         self.action_exit.setShortcut(QKeySequence.StandardKey.Quit)
@@ -66,11 +73,11 @@ class MainWindow(QMainWindow):
 
         self.action_undo = QAction(self._icons.get("undo"), "&Undo", self)
         self.action_undo.setShortcut(QKeySequence.StandardKey.Undo)
-        self.action_undo.triggered.connect(self._not_implemented)
+        self.action_undo.triggered.connect(self._session.undo)
 
         self.action_redo = QAction(self._icons.get("redo"), "&Redo", self)
         self.action_redo.setShortcut(QKeySequence.StandardKey.Redo)
-        self.action_redo.triggered.connect(self._not_implemented)
+        self.action_redo.triggered.connect(self._session.redo)
 
         self.action_add_variant = QAction(self._icons.get("add_variant"), "&Add Variant", self)
         self.action_add_variant.triggered.connect(self._not_implemented)
@@ -181,6 +188,8 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self._variant_label)
 
     def _on_open(self) -> None:
+        if not self._confirm_discard_changes():
+            return
         examples = Path.cwd() / "example-templates"
         default_dir = str(examples if examples.exists() else Path.cwd())
         path, _ = QFileDialog.getOpenFileName(
@@ -196,18 +205,76 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Open failed", f"Could not load template:\n\n{exc}")
 
+    def _on_save(self) -> None:
+        if self._session.template is None:
+            return
+        if self._session.path is None:
+            self._on_save_as()
+            return
+        try:
+            self._session.save()
+            self.statusBar().showMessage(f"Saved {self._session.path.name}", 3000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
+
+    def _on_save_as(self) -> None:
+        if self._session.template is None:
+            return
+        default = str(self._session.path or Path.cwd())
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Template As",
+            default,
+            "RMG Templates (*.rmg.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            self._session.save(Path(path))
+            self.statusBar().showMessage(f"Saved {Path(path).name}", 3000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
+
+    def _confirm_discard_changes(self) -> bool:
+        if not self._session.is_dirty:
+            return True
+        choice = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            "You have unsaved changes. Save before continuing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if choice == QMessageBox.StandardButton.Save:
+            self._on_save()
+            return not self._session.is_dirty
+        return choice == QMessageBox.StandardButton.Discard
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._confirm_discard_changes():
+            event.accept()
+        else:
+            event.ignore()
+
     def _on_template_changed(self) -> None:
         template = self._session.template
         path = self._session.path
         name = path.name if path else "Untitled"
-        self.setWindowTitle(f"TemplateGenerator — {name}")
         if template is not None:
             self.statusBar().showMessage(
-                f"Loaded {name}: {len(template.variants)} variant(s), "
-                f"{len(template.zoneLayouts)} layout(s)",
+                f"Loaded {name}: {len(template.variants)} variant(s), {len(template.zoneLayouts)} layout(s)",
                 4000,
             )
         self._update_variant_label()
+        self._update_title()
+
+    def _update_title(self, _dirty: bool | None = None) -> None:
+        path = self._session.path
+        name = path.name if path else "TemplateGenerator"
+        suffix = " *" if self._session.is_dirty else ""
+        self.setWindowTitle(f"TemplateGenerator — {name}{suffix}" if path else f"TemplateGenerator{suffix}")
 
     def _update_variant_label(self, _index: int | None = None) -> None:
         template = self._session.template

@@ -52,6 +52,10 @@ class EdgeItem(QGraphicsObject):
     def model_target(self) -> _StyledConnection:
         return self._connection
 
+    def refresh(self) -> None:
+        self.setToolTip(self._connection.name or f"{self._connection.from_} → {self._connection.to}")
+        self.update()
+
     def update_endpoints(self) -> None:
         self.prepareGeometryChange()
         self.update()

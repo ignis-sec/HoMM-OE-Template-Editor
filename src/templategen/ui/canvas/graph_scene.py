@@ -23,6 +23,7 @@ class GraphScene(QGraphicsScene):
 
         session.template_changed.connect(self.rebuild)
         session.current_variant_changed.connect(self.rebuild)
+        session.model_object_changed.connect(self._refresh_for)
         self.selectionChanged.connect(self._forward_selection)
 
     def rebuild(self) -> None:
@@ -51,3 +52,11 @@ class GraphScene(QGraphicsScene):
         items = self.selectedItems()
         target = getattr(items[0], "model_target", None) if items else None
         self._session.set_selection(target)
+
+    def _refresh_for(self, obj: object) -> None:
+        for item in self.items():
+            if getattr(item, "model_target", None) is obj:
+                refresh = getattr(item, "refresh", None)
+                if callable(refresh):
+                    refresh()
+                return

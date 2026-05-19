@@ -63,6 +63,10 @@ class ZoneItem(QGraphicsObject):
     def model_target(self) -> Zone:
         return self._zone
 
+    def refresh(self) -> None:
+        self.setToolTip(self._zone.name)
+        self.update()
+
     def add_edge(self, edge: EdgeItem) -> None:
         self._edges.append(edge)
 
