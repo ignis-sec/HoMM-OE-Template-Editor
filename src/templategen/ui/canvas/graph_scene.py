@@ -2,16 +2,15 @@
 
 from typing import Final
 
-import networkx as nx
 from PySide6.QtWidgets import QGraphicsScene
 
 from templategen.services.session import EditorSession
 from templategen.ui.canvas.connection_item import EdgeItem
+from templategen.ui.canvas.layout import compute_layout
 from templategen.ui.canvas.zone_item import ZoneItem
 
 _SCENE_SIZE: Final[float] = 1200.0
 _LAYOUT_SCALE: Final[float] = 500.0
-_LAYOUT_SEED: Final[int] = 42
 
 
 class GraphScene(QGraphicsScene):
@@ -35,13 +34,7 @@ class GraphScene(QGraphicsScene):
             return
         variant = template.variants[self._session.current_variant_index]
 
-        graph = nx.Graph()
-        for zone in variant.zones:
-            graph.add_node(zone.name)
-        for conn in variant.connections:
-            graph.add_edge(conn.from_, conn.to)
-
-        positions = nx.spring_layout(graph, seed=_LAYOUT_SEED, k=1.5)
+        positions = compute_layout(variant)
 
         for zone in variant.zones:
             x, y = positions[zone.name]
