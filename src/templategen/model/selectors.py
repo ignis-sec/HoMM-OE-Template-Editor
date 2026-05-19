@@ -1,27 +1,15 @@
-"""Faction and biome selectors — polymorphic by `type` discriminator."""
+"""Faction and biome selectors — { type, args } shape."""
 
-from pydantic import BaseModel
+from typing import Any
 
-
-class FactionSelector(BaseModel): ...
-
-
-class FromListFactionSelector(FactionSelector): ...
+from templategen.model.base import RmgModel
 
 
-class MatchFactionSelector(FactionSelector): ...
+class FactionSelector(RmgModel):
+    type: str
+    args: list[Any] = []
 
 
-class BiomeSelector(BaseModel): ...
-
-
-class FromListBiomeSelector(BiomeSelector): ...
-
-
-class MatchBiomeSelector(BiomeSelector): ...
-
-
-class MatchMainObjectBiomeSelector(BiomeSelector): ...
-
-
-class MatchZoneBiomeSelector(BiomeSelector): ...
+class BiomeSelector(RmgModel):
+    type: str
+    args: list[Any] = []
