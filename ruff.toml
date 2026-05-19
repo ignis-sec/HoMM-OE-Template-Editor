@@ -1,0 +1,79 @@
+# Exclude commonly ignored directories and project-specific ones.
+exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".venv",
+    ".vscode",
+    ".idea",
+    "__pypackages__",
+    "__pycache__",
+    "__*",
+    "build",
+    "dist",
+    "htmlcov",
+    "tmp_scripts",
+]
+
+line-length = 120
+indent-width = 4
+
+# Target Python 3.12 features and syntax.
+target-version = "py312"
+
+[lint]
+
+select = [
+    "E",        # pycodestyle errors
+    "F",        # pyflakes
+    "I",        # import sorting
+    "A",        # shadowing builtins
+    "B",        # bugbear
+    "SIM",      # simplify obvious logic
+    "T20",      # caveman debug (print/pprint)
+    "UP",       # pyupgrade — modernize syntax to target-version
+    "RUF",      # ruff-specific lints
+    "N",        # PEP8 naming
+    "PT",       # pytest style
+    "RET",      # return-statement hygiene
+    "PTH",      # prefer pathlib over os.path
+    "ARG",      # unused arguments
+    "C4",       # comprehensions
+    "PIE",      # miscellaneous improvements
+    "TC",       # move type-only imports under TYPE_CHECKING
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[lint.per-file-ignores]
+# Tests: allow assert, unused fixture args, magic numbers.
+"tests/**/*.py" = ["S101", "ARG", "PLR2004"]
+# Qt subclasses use camelCase method overrides (e.g. mousePressEvent).
+"src/templategen/ui/**/*.py" = ["N802", "N803"]
+# Scratch scripts: don't lint.
+"tmp_scripts/**/*.py" = ["ALL"]
+
+[lint.isort]
+known-first-party = ["templategen"]
+
+[format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+# Format code blocks embedded in docstrings.
+docstring-code-format = true
