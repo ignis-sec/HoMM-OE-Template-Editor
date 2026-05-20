@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,9 @@ from PySide6.QtWidgets import (
 from templategen.catalog.builder import CatalogBuildError, build_snapshot, write_snapshot
 from templategen.model.enums import OrientationMode
 from templategen.model.variant import Orientation, Variant
-from templategen.services.commands import AddVariantCommand, RemoveVariantCommand
+from templategen.model.zone import Zone
+from templategen.services.commands import AddVariantCommand, AddZoneCommand, RemoveVariantCommand
+from templategen.services.naming import unique_zone_name
 from templategen.services.validator import Validator
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
@@ -54,8 +57,9 @@ class MainWindow(QMainWindow):
         self._catalog = catalog
         self._clipboard = clipboard
         self._tab_for_document: dict[int, _DocumentTab] = {}
+        self._current_view: GraphView | None = None
 
-        self.setWindowTitle("TemplateGenerator")
+        self.setWindowTitle("HoMM:OE Template Editor")
         self.resize(1400, 900)
 
         self._build_actions()
@@ -76,6 +80,7 @@ class MainWindow(QMainWindow):
 
         self.action_undo.setEnabled(False)
         self.action_redo.setEnabled(False)
+        self._update_canvas_actions_enabled(False)
         self._update_title()
         self._update_variant_label()
 
@@ -118,6 +123,18 @@ class MainWindow(QMainWindow):
         self.action_remove_variant = QAction(self._icons.get("remove_variant"), "&Remove Current Variant", self)
         self.action_remove_variant.triggered.connect(self._on_remove_variant)
 
+        self.action_add_zone = QAction(self._icons.get("add_zone"), "Add &Zone", self)
+        self.action_add_zone.setShortcut("Ctrl+Shift+Z")
+        self.action_add_zone.triggered.connect(self._on_add_zone)
+
+        self.action_connect = QAction(self._icons.get("connect"), "&Connect Zones", self)
+        self.action_connect.setCheckable(True)
+        self.action_connect.setShortcut("Ctrl+L")
+        self.action_connect.toggled.connect(self._on_toggle_connect)
+
+        self.action_delete = QAction(self._icons.get("delete"), "&Delete Selection", self)
+        self.action_delete.triggered.connect(self._on_delete_selection)
+
         self.action_validate = QAction(self._icons.get("validate"), "&Validate", self)
         self.action_validate.setShortcut("F5")
         self.action_validate.triggered.connect(self._on_validate)
@@ -134,7 +151,7 @@ class MainWindow(QMainWindow):
         self.action_show_explorer = QAction("Show &Catalog Explorer", self)
         self.action_show_explorer.triggered.connect(self._on_show_explorer)
 
-        self.action_about = QAction(self._icons.get("about"), "&About TemplateGenerator", self)
+        self.action_about = QAction(self._icons.get("about"), "&About HoMM:OE Template Editor", self)
         self.action_about.triggered.connect(self._show_about)
 
         self.action_about_qt = QAction("About &Qt", self)
@@ -178,6 +195,10 @@ class MainWindow(QMainWindow):
         menu_edit = bar.addMenu("&Edit")
         menu_edit.addAction(self.action_undo)
         menu_edit.addAction(self.action_redo)
+        menu_edit.addSeparator()
+        menu_edit.addAction(self.action_add_zone)
+        menu_edit.addAction(self.action_connect)
+        menu_edit.addAction(self.action_delete)
 
         self.menu_view = bar.addMenu("&View")
 
@@ -210,6 +231,10 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self.action_undo)
         toolbar.addAction(self.action_redo)
+        toolbar.addSeparator()
+        toolbar.addAction(self.action_add_zone)
+        toolbar.addAction(self.action_connect)
+        toolbar.addAction(self.action_delete)
         toolbar.addSeparator()
         toolbar.addAction(self.action_validate)
 
@@ -281,7 +306,9 @@ class MainWindow(QMainWindow):
             self._empty_placeholder.setVisible(True)
 
     def _on_current_document_changed(self, document: Document | None) -> None:
+        self._rebind_current_view(document)
         if document is None:
+            self._update_canvas_actions_enabled(False)
             return
         tab = self._tab_for_document.get(id(document))
         if tab is None:
@@ -289,6 +316,34 @@ class MainWindow(QMainWindow):
         idx = self._tabs.indexOf(tab)
         if idx >= 0 and self._tabs.currentIndex() != idx:
             self._tabs.setCurrentIndex(idx)
+        self._update_canvas_actions_enabled(True)
+
+    def _rebind_current_view(self, document: Document | None) -> None:
+        if self._current_view is not None:
+            with contextlib.suppress(TypeError, RuntimeError):
+                self._current_view.connect_mode_changed.disconnect(self._sync_connect_action)
+        self._current_view = None
+        if document is None:
+            self._sync_connect_action(False)
+            return
+        tab = self._tab_for_document.get(id(document))
+        if tab is None:
+            return
+        self._current_view = tab.view
+        self._current_view.connect_mode_changed.connect(self._sync_connect_action)
+        self._sync_connect_action(self._current_view.connect_mode)
+
+    def _sync_connect_action(self, enabled: bool) -> None:
+        if self.action_connect.isChecked() == enabled:
+            return
+        self.action_connect.blockSignals(True)
+        self.action_connect.setChecked(enabled)
+        self.action_connect.blockSignals(False)
+
+    def _update_canvas_actions_enabled(self, enabled: bool) -> None:
+        self.action_add_zone.setEnabled(enabled)
+        self.action_connect.setEnabled(enabled)
+        self.action_delete.setEnabled(enabled)
 
     def _on_tab_changed(self, index: int) -> None:
         if index < 0:
@@ -403,6 +458,29 @@ class MainWindow(QMainWindow):
                 return
         event.accept()
 
+    def _on_add_zone(self) -> None:
+        template = self._workspace.template
+        if template is None or not template.variants:
+            self.statusBar().showMessage("Open a template first", 2500)
+            return
+        variant = template.variants[self._workspace.current_variant_index]
+        layout = template.zoneLayouts[0].name if template.zoneLayouts else ""
+        zone = Zone(name=unique_zone_name(variant), size=5.0, layout=layout)
+        self._workspace.execute(AddZoneCommand(self._workspace, variant, zone))
+        if not layout:
+            self.statusBar().showMessage(
+                "New zone created with no layout — add a Zone Layout in the Library, then assign it.",
+                5000,
+            )
+
+    def _on_toggle_connect(self, checked: bool) -> None:
+        if self._current_view is not None:
+            self._current_view.set_connect_mode(checked)
+
+    def _on_delete_selection(self) -> None:
+        if self._current_view is not None:
+            self._current_view.delete_selected()
+
     def _on_add_variant(self) -> None:
         template = self._workspace.template
         if template is None:
@@ -490,10 +568,10 @@ class MainWindow(QMainWindow):
     def _update_title(self, _dirty: bool | None = None) -> None:
         path = self._workspace.path
         if path is None:
-            self.setWindowTitle("TemplateGenerator")
+            self.setWindowTitle("HoMM:OE Template Editor")
             return
         suffix = " *" if self._workspace.is_dirty else ""
-        self.setWindowTitle(f"TemplateGenerator — {path.name}{suffix}")
+        self.setWindowTitle(f"HoMM:OE Template Editor — {path.name}{suffix}")
 
     def _update_variant_label(self, _index: int | None = None) -> None:
         template = self._workspace.template
@@ -510,8 +588,8 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self,
-            "About TemplateGenerator",
-            "<h3>TemplateGenerator</h3>"
+            "About HoMM:OE Template Editor",
+            "<h3>HoMM:OE Template Editor</h3>"
             "<p>Graphical editor for Heroes of Might and Magic: Olden Era random-map templates.</p>",
         )
 
@@ -528,3 +606,11 @@ class _DocumentTab(QWidget):
         self._view = GraphView(self._scene)
         layout.addWidget(self._variant_tabs)
         layout.addWidget(self._view, stretch=1)
+
+    @property
+    def view(self) -> GraphView:
+        return self._view
+
+    @property
+    def scene(self) -> GraphScene:
+        return self._scene

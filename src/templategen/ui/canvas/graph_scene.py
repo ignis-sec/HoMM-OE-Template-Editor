@@ -2,8 +2,10 @@
 
 from typing import Final
 
+from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QGraphicsScene
 
+from templategen.model.variant import Variant
 from templategen.services.session import EditorSession
 from templategen.ui.canvas.connection_item import EdgeItem
 from templategen.ui.canvas.layout import compute_layout
@@ -28,27 +30,59 @@ class GraphScene(QGraphicsScene):
 
         self.rebuild()
 
+    @property
+    def session(self) -> EditorSession:
+        return self._session
+
+    @property
+    def current_variant(self) -> Variant | None:
+        template = self._session.template
+        if not template or not template.variants:
+            return None
+        idx = self._session.current_variant_index
+        if not 0 <= idx < len(template.variants):
+            return None
+        return template.variants[idx]
+
+    @property
+    def zone_items(self) -> dict[str, ZoneItem]:
+        return dict(self._zone_items)
+
     def rebuild(self) -> None:
+        prior_positions = {
+            name: item.pos() for name, item in self._zone_items.items()
+        }
         self.clear()
         self._zone_items.clear()
 
-        template = self._session.template
-        if not template or not template.variants:
+        variant = self.current_variant
+        if variant is None:
             return
-        variant = template.variants[self._session.current_variant_index]
 
         positions = compute_layout(variant)
 
         for zone in variant.zones:
-            x, y = positions[zone.name]
             item = ZoneItem(zone)
-            item.setPos(x * _LAYOUT_SCALE, y * _LAYOUT_SCALE)
+            if zone.name in prior_positions:
+                item.setPos(prior_positions[zone.name])
+            else:
+                x, y = positions[zone.name]
+                item.setPos(x * _LAYOUT_SCALE, y * _LAYOUT_SCALE)
             self.addItem(item)
             self._zone_items[zone.name] = item
 
         for conn in variant.connections:
-            edge = EdgeItem(conn, self._zone_items[conn.from_], self._zone_items[conn.to])
+            source = self._zone_items.get(conn.from_)
+            target = self._zone_items.get(conn.to)
+            if source is None or target is None:
+                continue
+            edge = EdgeItem(conn, source, target)
             self.addItem(edge)
+
+    def viewport_center_scene_pos(self, fallback: QPointF | None = None) -> QPointF:
+        if fallback is not None:
+            return fallback
+        return QPointF(0.0, 0.0)
 
     def _forward_selection(self) -> None:
         items = self.selectedItems()
@@ -56,6 +90,9 @@ class GraphScene(QGraphicsScene):
         self._session.set_selection(target)
 
     def _refresh_for(self, obj: object) -> None:
+        if isinstance(obj, Variant) and obj is self.current_variant:
+            self.rebuild()
+            return
         for item in self.items():
             if getattr(item, "model_target", None) is obj:
                 refresh = getattr(item, "refresh", None)

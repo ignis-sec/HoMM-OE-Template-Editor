@@ -20,6 +20,7 @@ from templategen.model.content import ContentCountLimit, MandatoryContentBundle
 from templategen.model.layouts import ZoneLayout
 from templategen.model.template import Template
 from templategen.services.commands import AddListItemCommand, RemoveListItemCommand
+from templategen.services.naming import unique_name
 
 if TYPE_CHECKING:
     from templategen.services.clipboard import EditorClipboard
@@ -280,7 +281,7 @@ class LibraryPanel(QWidget):
         template = self._session.template
         if template is None:
             return
-        name = _unique_name("new_zone_layout", [zl.name for zl in template.zoneLayouts])
+        name = unique_name("new_zone_layout", [zl.name for zl in template.zoneLayouts])
         new_item = ZoneLayout(name=name)
         self._session.execute(
             AddListItemCommand(self._session, template, "zoneLayouts", new_item, f"Add zone layout {name}")
@@ -291,7 +292,7 @@ class LibraryPanel(QWidget):
         template = self._session.template
         if template is None:
             return
-        name = _unique_name("new_content", [b.name for b in template.mandatoryContent])
+        name = unique_name("new_content", [b.name for b in template.mandatoryContent])
         new_item = MandatoryContentBundle(name=name)
         self._session.execute(
             AddListItemCommand(self._session, template, "mandatoryContent", new_item, f"Add content bundle {name}")
@@ -302,7 +303,7 @@ class LibraryPanel(QWidget):
         template = self._session.template
         if template is None:
             return
-        name = _unique_name("new_limit", [c.name for c in template.contentCountLimits])
+        name = unique_name("new_limit", [c.name for c in template.contentCountLimits])
         new_item = ContentCountLimit(name=name)
         self._session.execute(
             AddListItemCommand(self._session, template, "contentCountLimits", new_item, f"Add count limit {name}")
@@ -379,12 +380,3 @@ class _LibraryTree(QTreeWidget):
             event.accept()
             return
         super().keyPressEvent(event)
-
-
-def _unique_name(base: str, existing: list[str]) -> str:
-    if base not in existing:
-        return base
-    i = 1
-    while f"{base}_{i}" in existing:
-        i += 1
-    return f"{base}_{i}"

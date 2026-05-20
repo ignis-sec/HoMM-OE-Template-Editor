@@ -153,40 +153,104 @@ class RemoveVariantCommand(Command):
 
 
 class AddZoneCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        variant: Any,
+        zone: Any,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Add zone {zone.name}")
+        self._variant = variant
+        self._zone = zone
+
     def redo(self) -> None:
-        raise NotImplementedError
+        self._variant.zones.append(self._zone)
+        self._session.model_object_changed.emit(self._variant)
+        self._session.set_selection(self._zone)
 
     def undo(self) -> None:
-        raise NotImplementedError
+        if self._zone in self._variant.zones:
+            self._variant.zones.remove(self._zone)
+        self._session.model_object_changed.emit(self._variant)
+        self._session.set_selection(None)
 
 
 class RemoveZoneCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        variant: Any,
+        zone: Any,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Remove zone {zone.name}")
+        self._variant = variant
+        self._zone = zone
+        self._index: int | None = None
+
     def redo(self) -> None:
-        raise NotImplementedError
+        self._index = self._variant.zones.index(self._zone)
+        self._variant.zones.pop(self._index)
+        self._session.model_object_changed.emit(self._variant)
+        if self._session.selection is self._zone:
+            self._session.set_selection(None)
 
     def undo(self) -> None:
-        raise NotImplementedError
+        if self._index is None:
+            return
+        self._variant.zones.insert(self._index, self._zone)
+        self._session.model_object_changed.emit(self._variant)
 
 
-class MoveZoneCommand(Command):
+class AddConnectionCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        variant: Any,
+        connection: Any,
+        text: str | None = None,
+    ) -> None:
+        label = connection.name or f"{connection.from_}→{connection.to}"
+        super().__init__(session, text or f"Add connection {label}")
+        self._variant = variant
+        self._connection = connection
+
     def redo(self) -> None:
-        raise NotImplementedError
+        self._variant.connections.append(self._connection)
+        self._session.model_object_changed.emit(self._variant)
+        self._session.set_selection(self._connection)
 
     def undo(self) -> None:
-        raise NotImplementedError
+        if self._connection in self._variant.connections:
+            self._variant.connections.remove(self._connection)
+        self._session.model_object_changed.emit(self._variant)
+        self._session.set_selection(None)
 
 
-class ConnectZonesCommand(Command):
+class RemoveConnectionCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        variant: Any,
+        connection: Any,
+        text: str | None = None,
+    ) -> None:
+        label = connection.name or f"{connection.from_}→{connection.to}"
+        super().__init__(session, text or f"Remove connection {label}")
+        self._variant = variant
+        self._connection = connection
+        self._index: int | None = None
+
     def redo(self) -> None:
-        raise NotImplementedError
+        self._index = self._variant.connections.index(self._connection)
+        self._variant.connections.pop(self._index)
+        self._session.model_object_changed.emit(self._variant)
+        if self._session.selection is self._connection:
+            self._session.set_selection(None)
 
     def undo(self) -> None:
-        raise NotImplementedError
-
-
-class DisconnectZonesCommand(Command):
-    def redo(self) -> None:
-        raise NotImplementedError
-
-    def undo(self) -> None:
-        raise NotImplementedError
+        if self._index is None:
+            return
+        self._variant.connections.insert(self._index, self._connection)
+        self._session.model_object_changed.emit(self._variant)

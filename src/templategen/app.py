@@ -18,7 +18,7 @@ def main() -> int:
     configure_logging()
 
     app = QApplication(sys.argv)
-    app.setApplicationName("TemplateGenerator")
+    app.setApplicationName("HoMM:OE Template Editor")
     app.setApplicationVersion(__version__)
     app.setOrganizationName("templategen")
 
