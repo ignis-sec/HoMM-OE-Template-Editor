@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from templategen.catalog.builder import CatalogBuildError, build_snapshot, write_snapshot
+from templategen.io.template_image import render_template_png, template_png_path
 from templategen.model.enums import OrientationMode
 from templategen.model.variant import Orientation, Variant
 from templategen.services.commands import AddVariantCommand, RemoveVariantCommand
@@ -417,6 +418,7 @@ class MainWindow(QMainWindow):
             return
         try:
             self._workspace.save()
+            self._export_template_png(current.session.path)
             self.statusBar().showMessage(f"Saved {current.session.path.name}", 3000)
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
@@ -436,12 +438,26 @@ class MainWindow(QMainWindow):
             return
         try:
             self._workspace.save(Path(path))
+            self._export_template_png(Path(path))
             self.statusBar().showMessage(f"Saved {Path(path).name}", 3000)
             current_doc = self._workspace.current
             if current_doc is not None:
                 self._refresh_tab_title(current_doc)
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
+
+    def _export_template_png(self, rmg_path: Path) -> None:
+        template = self._workspace.template
+        if template is None:
+            return
+        try:
+            render_template_png(
+                template,
+                template_png_path(rmg_path),
+                variant_index=self._workspace.current_variant_index,
+            )
+        except (OSError, FileNotFoundError) as exc:
+            self.statusBar().showMessage(f"PNG export failed: {exc}", 4000)
 
     def _confirm_discard_for(self, document: Document) -> bool:
         if not document.session.is_dirty:
