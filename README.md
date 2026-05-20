@@ -221,3 +221,17 @@ MIT.
 
 Unfortunately, very. I would love to artisanally hand-craft every line of code in this codebase, and maybe read a bedtime story to each class before I pull the blanket over them and give them a gentle kiss on the forehead, but I'm working a full-time job as a lead ML engineer and run a small security/ML consultancy agency. Spare time is a luxury I'd rather spend playing HoMM:OE. So if you like something about the project/codebase, it was me and thank you. If you hate something about the project/codebase, I blame Claude and so should you. 
 
+## "Windows protected your PC"
+
+Yeah, it is an unsigned binary, and windows is paranoid. Make sure you downloaded from the [releases page](https://github.com/ignis-sec/HoMM-OE-Template-Editor/releases/). You can check that it was released by github actions, building the codebase [in this action](https://github.com/ignis-sec/HoMM-OE-Template-Editor/blob/master/.github/workflows/release.yml), so what you download is literally what's in the github repository.
+
+## Why is the executable so large?
+
+Inner machinations of pyinstaller is an enigma, sorry. Python and QT is bundled in the binary there, so that's probably a contributing factor.
+
+
+## Closing remarks.
+
+Tested on Ubuntu 24.04 (proton gang rise up). So if you are having issues specific to Windows, I'll see what I can do but I'm not enthusiastic about it. 
+
+Issues and PR's are appreciated.
