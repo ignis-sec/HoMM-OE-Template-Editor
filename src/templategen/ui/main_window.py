@@ -23,9 +23,7 @@ from PySide6.QtWidgets import (
 from templategen.catalog.builder import CatalogBuildError, build_snapshot, write_snapshot
 from templategen.model.enums import OrientationMode
 from templategen.model.variant import Orientation, Variant
-from templategen.model.zone import Zone
-from templategen.services.commands import AddVariantCommand, AddZoneCommand, RemoveVariantCommand
-from templategen.services.naming import unique_zone_name
+from templategen.services.commands import AddVariantCommand, RemoveVariantCommand
 from templategen.services.validator import Validator
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
@@ -124,8 +122,9 @@ class MainWindow(QMainWindow):
         self.action_remove_variant.triggered.connect(self._on_remove_variant)
 
         self.action_add_zone = QAction(self._icons.get("add_zone"), "Add &Zone", self)
+        self.action_add_zone.setCheckable(True)
         self.action_add_zone.setShortcut("Ctrl+Shift+Z")
-        self.action_add_zone.triggered.connect(self._on_add_zone)
+        self.action_add_zone.toggled.connect(self._on_toggle_place)
 
         self.action_connect = QAction(self._icons.get("connect"), "&Connect Zones", self)
         self.action_connect.setCheckable(True)
@@ -286,8 +285,8 @@ class MainWindow(QMainWindow):
 
     def _on_document_added(self, document: Document) -> None:
         tab = _DocumentTab(document)
-        idx = self._tabs.addTab(tab, self._tab_title_for(document))
         self._tab_for_document[id(document)] = tab
+        idx = self._tabs.addTab(tab, self._tab_title_for(document))
         document.session.dirty_changed.connect(lambda _dirty, d=document: self._refresh_tab_title(d))
         document.session.template_changed.connect(lambda d=document: self._refresh_tab_title(d))
         self._tabs.setVisible(True)
@@ -322,16 +321,21 @@ class MainWindow(QMainWindow):
         if self._current_view is not None:
             with contextlib.suppress(TypeError, RuntimeError):
                 self._current_view.connect_mode_changed.disconnect(self._sync_connect_action)
+            with contextlib.suppress(TypeError, RuntimeError):
+                self._current_view.place_mode_changed.disconnect(self._sync_place_action)
         self._current_view = None
         if document is None:
             self._sync_connect_action(False)
+            self._sync_place_action(False)
             return
         tab = self._tab_for_document.get(id(document))
         if tab is None:
             return
         self._current_view = tab.view
         self._current_view.connect_mode_changed.connect(self._sync_connect_action)
+        self._current_view.place_mode_changed.connect(self._sync_place_action)
         self._sync_connect_action(self._current_view.connect_mode)
+        self._sync_place_action(self._current_view.place_mode)
 
     def _sync_connect_action(self, enabled: bool) -> None:
         if self.action_connect.isChecked() == enabled:
@@ -339,6 +343,13 @@ class MainWindow(QMainWindow):
         self.action_connect.blockSignals(True)
         self.action_connect.setChecked(enabled)
         self.action_connect.blockSignals(False)
+
+    def _sync_place_action(self, enabled: bool) -> None:
+        if self.action_add_zone.isChecked() == enabled:
+            return
+        self.action_add_zone.blockSignals(True)
+        self.action_add_zone.setChecked(enabled)
+        self.action_add_zone.blockSignals(False)
 
     def _update_canvas_actions_enabled(self, enabled: bool) -> None:
         self.action_add_zone.setEnabled(enabled)
@@ -458,20 +469,24 @@ class MainWindow(QMainWindow):
                 return
         event.accept()
 
-    def _on_add_zone(self) -> None:
-        template = self._workspace.template
-        if template is None or not template.variants:
-            self.statusBar().showMessage("Open a template first", 2500)
+    def _on_toggle_place(self, checked: bool) -> None:
+        if self._current_view is None:
+            self._sync_place_action(False)
             return
-        variant = template.variants[self._workspace.current_variant_index]
-        layout = template.zoneLayouts[0].name if template.zoneLayouts else ""
-        zone = Zone(name=unique_zone_name(variant), size=5.0, layout=layout)
-        self._workspace.execute(AddZoneCommand(self._workspace, variant, zone))
-        if not layout:
-            self.statusBar().showMessage(
-                "New zone created with no layout — add a Zone Layout in the Library, then assign it.",
-                5000,
-            )
+        if checked and self._workspace.template is None:
+            self.statusBar().showMessage("Open a template first", 2500)
+            self._sync_place_action(False)
+            return
+        self._current_view.set_place_mode(checked)
+        if checked:
+            template = self._workspace.template
+            if template is not None and not template.zoneLayouts:
+                self.statusBar().showMessage(
+                    "New zones will be created with no layout — add a Zone Layout in the Library, then assign it.",
+                    5000,
+                )
+            else:
+                self.statusBar().showMessage("Click on the canvas to place a new zone (Esc to cancel)", 4000)
 
     def _on_toggle_connect(self, checked: bool) -> None:
         if self._current_view is not None:

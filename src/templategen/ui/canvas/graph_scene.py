@@ -10,6 +10,7 @@ from templategen.services.session import EditorSession
 from templategen.ui.canvas.connection_item import EdgeItem
 from templategen.ui.canvas.layout import compute_layout
 from templategen.ui.canvas.zone_item import ZoneItem
+from templategen.ui.canvas.zone_style import compute_zone_styles
 
 _SCENE_SIZE: Final[float] = 1200.0
 _LAYOUT_SCALE: Final[float] = 500.0
@@ -20,6 +21,7 @@ class GraphScene(QGraphicsScene):
         super().__init__()
         self._session = session
         self._zone_items: dict[str, ZoneItem] = {}
+        self._pending_positions: dict[str, QPointF] = {}
 
         self.setSceneRect(-_SCENE_SIZE / 2, -_SCENE_SIZE / 2, _SCENE_SIZE, _SCENE_SIZE)
 
@@ -48,10 +50,11 @@ class GraphScene(QGraphicsScene):
     def zone_items(self) -> dict[str, ZoneItem]:
         return dict(self._zone_items)
 
+    def stage_position(self, zone_name: str, scene_pos: QPointF) -> None:
+        self._pending_positions[zone_name] = QPointF(scene_pos)
+
     def rebuild(self) -> None:
-        prior_positions = {
-            name: item.pos() for name, item in self._zone_items.items()
-        }
+        prior_positions = {name: item.pos() for name, item in self._zone_items.items()}
         self.clear()
         self._zone_items.clear()
 
@@ -59,14 +62,18 @@ class GraphScene(QGraphicsScene):
         if variant is None:
             return
 
-        positions = compute_layout(variant)
+        styles = compute_zone_styles(variant)
+        layout_positions = compute_layout(variant) if variant.zones else {}
 
         for zone in variant.zones:
-            item = ZoneItem(zone)
-            if zone.name in prior_positions:
+            style = styles[zone.name]
+            item = ZoneItem(zone, radius=style.radius, fill=style.fill)
+            if zone.name in self._pending_positions:
+                item.setPos(self._pending_positions.pop(zone.name))
+            elif zone.name in prior_positions:
                 item.setPos(prior_positions[zone.name])
             else:
-                x, y = positions[zone.name]
+                x, y = layout_positions[zone.name]
                 item.setPos(x * _LAYOUT_SCALE, y * _LAYOUT_SCALE)
             self.addItem(item)
             self._zone_items[zone.name] = item
@@ -79,10 +86,7 @@ class GraphScene(QGraphicsScene):
             edge = EdgeItem(conn, source, target)
             self.addItem(edge)
 
-    def viewport_center_scene_pos(self, fallback: QPointF | None = None) -> QPointF:
-        if fallback is not None:
-            return fallback
-        return QPointF(0.0, 0.0)
+        self.update()
 
     def _forward_selection(self) -> None:
         items = self.selectedItems()

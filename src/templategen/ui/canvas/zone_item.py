@@ -4,56 +4,27 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QStyleOptionGraphicsItem, QWidget
 
-from templategen.model.enums import PlayerId
-from templategen.model.main_objects import (
-    AbandonedOutpostObject,
-    CityObject,
-    GladiatorArenaObject,
-    SpawnObject,
-)
-
 if TYPE_CHECKING:
+    from PySide6.QtCore import QPointF
+
     from templategen.model.zone import Zone
     from templategen.ui.canvas.connection_item import EdgeItem
 
-_PLAYER_COLOR: Final[dict[str, QColor]] = {
-    PlayerId.PLAYER_1: QColor("#d04b4b"),
-    PlayerId.PLAYER_2: QColor("#3a78d6"),
-    PlayerId.PLAYER_3: QColor("#5ab84b"),
-    PlayerId.PLAYER_4: QColor("#e7b93a"),
-    PlayerId.PLAYER_5: QColor("#3fb8b8"),
-    PlayerId.PLAYER_6: QColor("#a358cf"),
-    PlayerId.PLAYER_7: QColor("#e8703a"),
-    PlayerId.PLAYER_8: QColor("#e58fc1"),
-}
-_CITY_COLOR: Final[QColor] = QColor("#a8845a")
-_TREASURE_COLOR: Final[QColor] = QColor("#b04848")
-_CONNECTOR_COLOR: Final[QColor] = QColor("#666b75")
 
-_RADIUS: Final[float] = 32.0
-
-
-def _fill_color(zone: Zone) -> QColor:
-    for mo in zone.mainObjects:
-        if isinstance(mo, SpawnObject) and mo.spawn is not None:
-            return _PLAYER_COLOR.get(mo.spawn, _TREASURE_COLOR)
-        if isinstance(mo, CityObject):
-            return _CITY_COLOR
-        if isinstance(mo, AbandonedOutpostObject | GladiatorArenaObject):
-            return _TREASURE_COLOR
-    return _CONNECTOR_COLOR
+DEFAULT_RADIUS: Final[float] = 32.0
 
 
 class ZoneItem(QGraphicsObject):
-    def __init__(self, zone: Zone) -> None:
+    def __init__(self, zone: Zone, *, radius: float = DEFAULT_RADIUS, fill: QColor | None = None) -> None:
         super().__init__()
         self._zone = zone
         self._edges: list[EdgeItem] = []
-        self._fill = _fill_color(zone)
+        self._radius = radius
+        self._fill = fill if fill is not None else QColor("#666b75")
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
@@ -74,7 +45,8 @@ class ZoneItem(QGraphicsObject):
         return self.scenePos()
 
     def boundingRect(self) -> QRectF:
-        return QRectF(-_RADIUS, -_RADIUS, 2 * _RADIUS, 2 * _RADIUS)
+        r = self._radius
+        return QRectF(-r, -r, 2 * r, 2 * r)
 
     def paint(
         self,
@@ -90,7 +62,7 @@ class ZoneItem(QGraphicsObject):
 
         painter.setPen(QColor("#fff"))
         font = QFont()
-        font.setPointSize(8)
+        font.setPointSize(max(7, int(8 + self._radius / 32 - 1)))
         painter.setFont(font)
         painter.drawText(self.boundingRect(), Qt.AlignmentFlag.AlignCenter, self._zone.name)
 
