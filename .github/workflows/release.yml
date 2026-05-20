@@ -24,23 +24,42 @@ jobs:
           pip install .
           pip install pyinstaller
 
+      - name: Show installed packages
+        run: pip list
+
+      - name: Verify PySide6 is importable
+        run: python -c "import PySide6, PySide6.QtWidgets; print('PySide6 at', PySide6.__file__)"
+
       - name: Build Windows executable
-        run: >
-          pyinstaller
-          --name "HoMM OE Template Editor"
-          --onefile
-          --windowed
-          --noconfirm
-          --paths src
-          --add-data "src/templategen/img;templategen/img"
-          --add-data "data/catalog.json;data"
-          --collect-all PySide6
-          --collect-all shiboken6
-          --collect-all qtawesome
-          --collect-all qdarktheme
-          --collect-all scipy
-          --collect-submodules templategen
-          src/templategen/app.py
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --name "HoMM OE Template Editor" `
+            --onefile `
+            --windowed `
+            --noconfirm `
+            --log-level INFO `
+            --add-data "src/templategen/img;templategen/img" `
+            --add-data "data/catalog.json;data" `
+            --collect-all PySide6 `
+            --collect-all shiboken6 `
+            --collect-all qtawesome `
+            --collect-all qdarktheme `
+            --collect-all scipy `
+            --collect-all networkx `
+            --collect-all pydantic `
+            --collect-submodules templategen `
+            launch.py
+
+      - name: Inspect build output
+        shell: pwsh
+        run: |
+          Get-ChildItem dist | Format-Table Name, Length
+          $exe = "dist/HoMM OE Template Editor.exe"
+          if (-not (Test-Path $exe)) { throw "exe not built at $exe" }
+          $size = (Get-Item $exe).Length / 1MB
+          Write-Host ("exe size: {0:N1} MB" -f $size)
+          if ($size -lt 30) { throw "exe is only ${size}MB — PySide6 was not bundled" }
 
       - name: Rename artifact with version
         shell: pwsh
