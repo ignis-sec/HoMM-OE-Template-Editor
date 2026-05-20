@@ -26,6 +26,8 @@ class GraphScene(QGraphicsScene):
         session.model_object_changed.connect(self._refresh_for)
         self.selectionChanged.connect(self._forward_selection)
 
+        self.rebuild()
+
     def rebuild(self) -> None:
         self.clear()
         self._zone_items.clear()

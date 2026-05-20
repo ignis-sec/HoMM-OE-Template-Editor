@@ -22,17 +22,25 @@ from templategen.model.template import Template
 from templategen.services.commands import AddListItemCommand, RemoveListItemCommand
 
 if TYPE_CHECKING:
-    from templategen.services.session import EditorSession
+    from templategen.services.clipboard import EditorClipboard
+    from templategen.services.workspace import Workspace
 
 _NAME_COLUMN = 0
 _BRANCH_ROLE = Qt.ItemDataRole.UserRole + 1
 _MODEL_ROLE = Qt.ItemDataRole.UserRole + 2
 
+_FIELD_FOR_TYPE: dict[type, str] = {
+    ZoneLayout: "zoneLayouts",
+    MandatoryContentBundle: "mandatoryContent",
+    ContentCountLimit: "contentCountLimits",
+}
+
 
 class LibraryPanel(QWidget):
-    def __init__(self, session: EditorSession) -> None:
+    def __init__(self, workspace: Workspace, clipboard: EditorClipboard) -> None:
         super().__init__()
-        self._session = session
+        self._session = workspace
+        self._clipboard = clipboard
         self._items_by_model_id: dict[int, QTreeWidgetItem] = {}
 
         self.setMinimumWidth(260)
@@ -63,10 +71,12 @@ class LibraryPanel(QWidget):
         self._tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
-        session.template_changed.connect(self._rebuild)
-        session.model_object_changed.connect(self._on_model_changed)
+        workspace.template_changed.connect(self._rebuild)
+        workspace.model_object_changed.connect(self._on_model_changed)
 
         self._update_buttons_enabled()
+
+    # ─── Tree building ────────────────────────────────────────────────────
 
     def _rebuild(self) -> None:
         self._tree.blockSignals(True)
@@ -133,24 +143,116 @@ class LibraryPanel(QWidget):
         if item is not None:
             item.setText(_NAME_COLUMN, getattr(obj, "name", "?"))
 
+    # ─── Context menu ─────────────────────────────────────────────────────
+
     def _on_context_menu(self, pos: object) -> None:
         item = self._tree.itemAt(pos)
-        if item is None or item.data(_NAME_COLUMN, _MODEL_ROLE) is None:
-            return
         menu = QMenu(self)
-        remove_action = QAction("Remove", self)
-        remove_action.triggered.connect(lambda: self._remove_item(item))
-        menu.addAction(remove_action)
+
+        model = item.data(_NAME_COLUMN, _MODEL_ROLE) if item is not None else None
+        if model is not None:
+            cut_action = QAction("Cut", self)
+            cut_action.setShortcut("Ctrl+X")
+            cut_action.triggered.connect(lambda: self._cut(item))
+            menu.addAction(cut_action)
+
+            copy_action = QAction("Copy", self)
+            copy_action.setShortcut("Ctrl+C")
+            copy_action.triggered.connect(lambda: self._copy(item))
+            menu.addAction(copy_action)
+
+        paste_action = QAction("Paste", self)
+        paste_action.setShortcut("Ctrl+V")
+        paste_action.setEnabled(self._can_paste())
+        paste_action.triggered.connect(self.paste)
+        menu.addAction(paste_action)
+
+        if model is not None:
+            menu.addSeparator()
+            duplicate_action = QAction("Duplicate", self)
+            duplicate_action.triggered.connect(lambda: self._duplicate(item))
+            menu.addAction(duplicate_action)
+            remove_action = QAction("Remove", self)
+            remove_action.triggered.connect(lambda: self._remove_item(item))
+            menu.addAction(remove_action)
+
+        if menu.isEmpty():
+            return
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
+    # ─── Keyboard / public actions ────────────────────────────────────────
+
+    def copy_selected(self) -> None:
+        item = self._selected_item()
+        if item is not None:
+            self._copy(item)
+
+    def cut_selected(self) -> None:
+        item = self._selected_item()
+        if item is not None:
+            self._cut(item)
+
+    def duplicate_selected(self) -> None:
+        item = self._selected_item()
+        if item is not None:
+            self._duplicate(item)
+
     def delete_selected(self) -> None:
-        items = self._tree.selectedItems()
-        if not items:
+        item = self._selected_item()
+        if item is not None:
+            self._remove_item(item)
+
+    def paste(self) -> None:
+        if not self._can_paste() or self._session.template is None:
             return
-        item = items[0]
-        if item.data(_NAME_COLUMN, _MODEL_ROLE) is None:
+        source = self._clipboard.item
+        assert source is not None
+        field = _FIELD_FOR_TYPE.get(type(source))
+        if field is None:
             return
+        new_item = source.model_copy(deep=True)
+        new_item.name = self._unique_in_field(field, new_item.name)
+        self._session.execute(
+            AddListItemCommand(
+                self._session,
+                self._session.template,
+                field,
+                new_item,
+                f"Paste {new_item.name}",
+            )
+        )
+
+    # ─── Per-item operations ──────────────────────────────────────────────
+
+    def _copy(self, item: QTreeWidgetItem) -> None:
+        model = item.data(_NAME_COLUMN, _MODEL_ROLE)
+        if model is not None:
+            self._clipboard.set_item(model.model_copy(deep=True))
+
+    def _cut(self, item: QTreeWidgetItem) -> None:
+        model = item.data(_NAME_COLUMN, _MODEL_ROLE)
+        if model is None:
+            return
+        self._clipboard.set_item(model.model_copy(deep=True))
         self._remove_item(item)
+
+    def _duplicate(self, item: QTreeWidgetItem) -> None:
+        model = item.data(_NAME_COLUMN, _MODEL_ROLE)
+        parent = item.parent()
+        if model is None or parent is None or self._session.template is None:
+            return
+        field = parent.data(_NAME_COLUMN, _BRANCH_ROLE)
+        new_item = model.model_copy(deep=True)
+        new_item.name = self._unique_in_field(field, new_item.name)
+        self._session.execute(
+            AddListItemCommand(
+                self._session,
+                self._session.template,
+                field,
+                new_item,
+                f"Duplicate {new_item.name}",
+            )
+        )
 
     def _remove_item(self, item: QTreeWidgetItem) -> None:
         model = item.data(_NAME_COLUMN, _MODEL_ROLE)
@@ -169,6 +271,8 @@ class LibraryPanel(QWidget):
                 f"Remove {model.name}",
             )
         )
+
+    # ─── Library Add buttons (existing) ───────────────────────────────────
 
     def _add_zone_layout(self) -> None:
         template = self._session.template
@@ -215,6 +319,40 @@ class LibraryPanel(QWidget):
             )
         )
 
+    # ─── Helpers ──────────────────────────────────────────────────────────
+
+    def _selected_item(self) -> QTreeWidgetItem | None:
+        items = self._tree.selectedItems()
+        if not items:
+            return None
+        item = items[0]
+        if item.data(_NAME_COLUMN, _MODEL_ROLE) is None:
+            return None
+        return item
+
+    def _can_paste(self) -> bool:
+        if not self._clipboard.has_item() or self._session.template is None:
+            return False
+        return type(self._clipboard.item) in _FIELD_FOR_TYPE
+
+    def _unique_in_field(self, field: str, desired: str) -> str:
+        existing = self._existing_names(field)
+        if desired not in existing:
+            return desired
+        base = desired if desired.endswith("_copy") else f"{desired}_copy"
+        if base not in existing:
+            return base
+        i = 1
+        while f"{base}_{i}" in existing:
+            i += 1
+        return f"{base}_{i}"
+
+    def _existing_names(self, field: str) -> list[str]:
+        template = self._session.template
+        if template is None:
+            return []
+        return [getattr(x, "name", "") for x in getattr(template, field, [])]
+
 
 class _LibraryTree(QTreeWidget):
     def __init__(self, panel: LibraryPanel) -> None:
@@ -222,6 +360,23 @@ class _LibraryTree(QTreeWidget):
         self._panel = panel
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            if event.key() == Qt.Key.Key_C:
+                self._panel.copy_selected()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_X:
+                self._panel.cut_selected()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_V:
+                self._panel.paste()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_D:
+                self._panel.duplicate_selected()
+                event.accept()
+                return
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self._panel.delete_selected()
             event.accept()

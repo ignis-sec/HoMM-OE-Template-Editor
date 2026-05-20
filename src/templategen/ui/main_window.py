@@ -1,6 +1,9 @@
-"""Main application window — wires menus, toolbar, docks, and status bar."""
+"""Main application window — multi-document, side docks bound to the workspace."""
+
+from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
@@ -10,30 +13,42 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QTabWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
 )
 
 from templategen.catalog.builder import CatalogBuildError, build_snapshot, write_snapshot
-from templategen.catalog.game_data import GameDataCatalog
-from templategen.services.session import EditorSession
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
 from templategen.ui.dialogs.template_settings import TemplateSettingsDialog
-from templategen.ui.icons import IconRegistry
 from templategen.ui.panels.explorer import CatalogExplorer
 from templategen.ui.panels.inspector import Inspector
 from templategen.ui.panels.library import LibraryPanel
 from templategen.ui.panels.variant_tabs import VariantTabBar
 
+if TYPE_CHECKING:
+    from templategen.catalog.game_data import GameDataCatalog
+    from templategen.services.clipboard import EditorClipboard
+    from templategen.services.workspace import Document, Workspace
+    from templategen.ui.icons import IconRegistry
+
 
 class MainWindow(QMainWindow):
-    def __init__(self, session: EditorSession, icons: IconRegistry, catalog: GameDataCatalog) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        icons: IconRegistry,
+        catalog: GameDataCatalog,
+        clipboard: EditorClipboard,
+    ) -> None:
         super().__init__()
-        self._session = session
+        self._workspace = workspace
         self._icons = icons
         self._catalog = catalog
+        self._clipboard = clipboard
+        self._tab_for_document: dict[int, _DocumentTab] = {}
 
         self.setWindowTitle("TemplateGenerator")
         self.resize(1400, 900)
@@ -45,24 +60,32 @@ class MainWindow(QMainWindow):
         self._build_docks()
         self._build_statusbar()
 
-        session.template_changed.connect(self._on_template_changed)
-        session.current_variant_changed.connect(self._update_variant_label)
-        session.dirty_changed.connect(self._update_title)
-        session.undo_available_changed.connect(self.action_undo.setEnabled)
-        session.redo_available_changed.connect(self.action_redo.setEnabled)
+        workspace.template_changed.connect(self._on_template_changed)
+        workspace.current_variant_changed.connect(self._update_variant_label)
+        workspace.dirty_changed.connect(self._update_title)
+        workspace.undo_available_changed.connect(self.action_undo.setEnabled)
+        workspace.redo_available_changed.connect(self.action_redo.setEnabled)
+        workspace.document_added.connect(self._on_document_added)
+        workspace.document_removed.connect(self._on_document_removed)
+        workspace.current_document_changed.connect(self._on_current_document_changed)
 
         self.action_undo.setEnabled(False)
         self.action_redo.setEnabled(False)
-        self.action_save.setEnabled(True)
+        self._update_title()
+        self._update_variant_label()
 
     def _build_actions(self) -> None:
         self.action_new = QAction(self._icons.get("new"), "&New Template", self)
         self.action_new.setShortcut(QKeySequence.StandardKey.New)
-        self.action_new.triggered.connect(self._not_implemented)
+        self.action_new.triggered.connect(self._on_new)
 
         self.action_open = QAction(self._icons.get("open"), "&Open…", self)
         self.action_open.setShortcut(QKeySequence.StandardKey.Open)
         self.action_open.triggered.connect(self._on_open)
+
+        self.action_close_tab = QAction("&Close Tab", self)
+        self.action_close_tab.setShortcut(QKeySequence.StandardKey.Close)
+        self.action_close_tab.triggered.connect(self._on_close_current_tab)
 
         self.action_save = QAction(self._icons.get("save"), "&Save", self)
         self.action_save.setShortcut(QKeySequence.StandardKey.Save)
@@ -78,11 +101,11 @@ class MainWindow(QMainWindow):
 
         self.action_undo = QAction(self._icons.get("undo"), "&Undo", self)
         self.action_undo.setShortcut(QKeySequence.StandardKey.Undo)
-        self.action_undo.triggered.connect(self._session.undo)
+        self.action_undo.triggered.connect(self._workspace.undo)
 
         self.action_redo = QAction(self._icons.get("redo"), "&Redo", self)
         self.action_redo.setShortcut(QKeySequence.StandardKey.Redo)
-        self.action_redo.triggered.connect(self._session.redo)
+        self.action_redo.triggered.connect(self._workspace.redo)
 
         self.action_add_variant = QAction(self._icons.get("add_variant"), "&Add Variant", self)
         self.action_add_variant.triggered.connect(self._not_implemented)
@@ -113,18 +136,23 @@ class MainWindow(QMainWindow):
         self.action_about_qt.triggered.connect(lambda: QMessageBox.aboutQt(self))
 
     def _build_central(self) -> None:
+        self._tabs = QTabWidget()
+        self._tabs.setTabsClosable(True)
+        self._tabs.setMovable(True)
+        self._tabs.setDocumentMode(True)
+        self._tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+
+        self._empty_placeholder = QLabel("No template open. Use File → Open or File → New.")
+        self._empty_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_placeholder.setStyleSheet("color: #888; font-size: 14px;")
+
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self._variant_tabs = VariantTabBar(self._session)
-        self._graph_scene = GraphScene(self._session)
-        self._graph_view = GraphView(self._graph_scene)
-
-        layout.addWidget(self._variant_tabs)
-        layout.addWidget(self._graph_view, stretch=1)
-
+        layout.addWidget(self._tabs)
+        layout.addWidget(self._empty_placeholder)
+        self._tabs.setVisible(False)
         self.setCentralWidget(central)
 
     def _build_menus(self) -> None:
@@ -139,6 +167,7 @@ class MainWindow(QMainWindow):
         menu_file.addAction(self.action_save)
         menu_file.addAction(self.action_save_as)
         menu_file.addSeparator()
+        menu_file.addAction(self.action_close_tab)
         menu_file.addAction(self.action_exit)
 
         menu_edit = bar.addMenu("&Edit")
@@ -182,12 +211,12 @@ class MainWindow(QMainWindow):
     def _build_docks(self) -> None:
         self._library_dock = self._make_dock(
             "Library",
-            LibraryPanel(self._session),
+            LibraryPanel(self._workspace, self._clipboard),
             Qt.DockWidgetArea.LeftDockWidgetArea,
         )
         self._inspector_dock = self._make_dock(
             "Inspector",
-            Inspector(self._session, self._catalog),
+            Inspector(self._workspace, self._catalog),
             Qt.DockWidgetArea.RightDockWidgetArea,
         )
         self._explorer = CatalogExplorer(self._catalog)
@@ -225,9 +254,69 @@ class MainWindow(QMainWindow):
         self._variant_label = QLabel("No template")
         bar.addPermanentWidget(self._variant_label)
 
-    def _on_open(self) -> None:
-        if not self._confirm_discard_changes():
+    def _on_document_added(self, document: Document) -> None:
+        tab = _DocumentTab(document)
+        idx = self._tabs.addTab(tab, self._tab_title_for(document))
+        self._tab_for_document[id(document)] = tab
+        document.session.dirty_changed.connect(lambda _dirty, d=document: self._refresh_tab_title(d))
+        document.session.template_changed.connect(lambda d=document: self._refresh_tab_title(d))
+        self._tabs.setVisible(True)
+        self._empty_placeholder.setVisible(False)
+        self._tabs.setCurrentIndex(idx)
+
+    def _on_document_removed(self, document: Document) -> None:
+        tab = self._tab_for_document.pop(id(document), None)
+        if tab is None:
             return
+        idx = self._tabs.indexOf(tab)
+        if idx >= 0:
+            self._tabs.removeTab(idx)
+        if self._tabs.count() == 0:
+            self._tabs.setVisible(False)
+            self._empty_placeholder.setVisible(True)
+
+    def _on_current_document_changed(self, document: Document | None) -> None:
+        if document is None:
+            return
+        tab = self._tab_for_document.get(id(document))
+        if tab is None:
+            return
+        idx = self._tabs.indexOf(tab)
+        if idx >= 0 and self._tabs.currentIndex() != idx:
+            self._tabs.setCurrentIndex(idx)
+
+    def _on_tab_changed(self, index: int) -> None:
+        if index < 0:
+            self._workspace.set_current(None)
+            return
+        tab = self._tabs.widget(index)
+        if isinstance(tab, _DocumentTab):
+            self._workspace.set_current(tab.document)
+
+    def _on_tab_close_requested(self, index: int) -> None:
+        tab = self._tabs.widget(index)
+        if not isinstance(tab, _DocumentTab):
+            return
+        if not self._confirm_discard_for(tab.document):
+            return
+        self._workspace.close_document(tab.document)
+
+    def _tab_title_for(self, document: Document) -> str:
+        name = document.session.path.name if document.session.path else "Untitled"
+        return f"{name}{'*' if document.session.is_dirty else ''}"
+
+    def _refresh_tab_title(self, document: Document) -> None:
+        tab = self._tab_for_document.get(id(document))
+        if tab is None:
+            return
+        idx = self._tabs.indexOf(tab)
+        if idx >= 0:
+            self._tabs.setTabText(idx, self._tab_title_for(document))
+
+    def _on_new(self) -> None:
+        self._workspace.new_document()
+
+    def _on_open(self) -> None:
         examples = Path.cwd() / "example-templates"
         default_dir = str(examples if examples.exists() else Path.cwd())
         path, _ = QFileDialog.getOpenFileName(
@@ -239,26 +328,33 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            self._session.load(Path(path))
+            self._workspace.open_document(Path(path))
         except Exception as exc:
             QMessageBox.critical(self, "Open failed", f"Could not load template:\n\n{exc}")
 
+    def _on_close_current_tab(self) -> None:
+        idx = self._tabs.currentIndex()
+        if idx >= 0:
+            self._on_tab_close_requested(idx)
+
     def _on_save(self) -> None:
-        if self._session.template is None:
+        current = self._workspace.current
+        if current is None:
             return
-        if self._session.path is None:
+        if current.session.path is None:
             self._on_save_as()
             return
         try:
-            self._session.save()
-            self.statusBar().showMessage(f"Saved {self._session.path.name}", 3000)
+            self._workspace.save()
+            self.statusBar().showMessage(f"Saved {current.session.path.name}", 3000)
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
 
     def _on_save_as(self) -> None:
-        if self._session.template is None:
+        current = self._workspace.current
+        if current is None:
             return
-        default = str(self._session.path or Path.cwd())
+        default = str(current.session.path or Path.cwd())
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Template As",
@@ -268,66 +364,45 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            self._session.save(Path(path))
+            self._workspace.save(Path(path))
             self.statusBar().showMessage(f"Saved {Path(path).name}", 3000)
+            current_doc = self._workspace.current
+            if current_doc is not None:
+                self._refresh_tab_title(current_doc)
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
 
-    def _confirm_discard_changes(self) -> bool:
-        if not self._session.is_dirty:
+    def _confirm_discard_for(self, document: Document) -> bool:
+        if not document.session.is_dirty:
             return True
+        name = document.session.path.name if document.session.path else "Untitled"
         choice = QMessageBox.question(
             self,
             "Unsaved changes",
-            "You have unsaved changes. Save before continuing?",
+            f"'{name}' has unsaved changes. Save before closing?",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Save,
         )
         if choice == QMessageBox.StandardButton.Save:
+            self._workspace.set_current(document)
             self._on_save()
-            return not self._session.is_dirty
+            return not document.session.is_dirty
         return choice == QMessageBox.StandardButton.Discard
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self._confirm_discard_changes():
-            event.accept()
-        else:
-            event.ignore()
-
-    def _on_template_changed(self) -> None:
-        template = self._session.template
-        path = self._session.path
-        name = path.name if path else "Untitled"
-        if template is not None:
-            self.statusBar().showMessage(
-                f"Loaded {name}: {len(template.variants)} variant(s), {len(template.zoneLayouts)} layout(s)",
-                4000,
-            )
-        self._update_variant_label()
-        self._update_title()
-
-    def _update_title(self, _dirty: bool | None = None) -> None:
-        path = self._session.path
-        name = path.name if path else "TemplateGenerator"
-        suffix = " *" if self._session.is_dirty else ""
-        self.setWindowTitle(f"TemplateGenerator — {name}{suffix}" if path else f"TemplateGenerator{suffix}")
-
-    def _update_variant_label(self, _index: int | None = None) -> None:
-        template = self._session.template
-        if template is None or not template.variants:
-            self._variant_label.setText("No template")
-            return
-        cur = self._session.current_variant_index + 1
-        total = len(template.variants)
-        self._variant_label.setText(f"Variant {cur} of {total}")
+        for doc in self._workspace.documents:
+            if not self._confirm_discard_for(doc):
+                event.ignore()
+                return
+        event.accept()
 
     def _on_template_settings(self) -> None:
-        if self._session.template is None:
+        if self._workspace.template is None:
             self.statusBar().showMessage("Open a template first", 2500)
             return
-        dialog = TemplateSettingsDialog(self._session, self._session.template, self._catalog, self)
+        dialog = TemplateSettingsDialog(self._workspace, self._workspace.template, self._catalog, self)
         dialog.exec()
 
     def _on_rebuild_catalog(self) -> None:
@@ -363,6 +438,35 @@ class MainWindow(QMainWindow):
         self._explorer_dock.raise_()
         self._explorer_dock.activateWindow()
 
+    def _on_template_changed(self) -> None:
+        template = self._workspace.template
+        path = self._workspace.path
+        name = path.name if path else "Untitled"
+        if template is not None:
+            self.statusBar().showMessage(
+                f"Loaded {name}: {len(template.variants)} variant(s), {len(template.zoneLayouts)} layout(s)",
+                4000,
+            )
+        self._update_variant_label()
+        self._update_title()
+
+    def _update_title(self, _dirty: bool | None = None) -> None:
+        path = self._workspace.path
+        if path is None:
+            self.setWindowTitle("TemplateGenerator")
+            return
+        suffix = " *" if self._workspace.is_dirty else ""
+        self.setWindowTitle(f"TemplateGenerator — {path.name}{suffix}")
+
+    def _update_variant_label(self, _index: int | None = None) -> None:
+        template = self._workspace.template
+        if template is None or not template.variants:
+            self._variant_label.setText("No template")
+            return
+        cur = self._workspace.current_variant_index + 1
+        total = len(template.variants)
+        self._variant_label.setText(f"Variant {cur} of {total}")
+
     def _not_implemented(self) -> None:
         self.statusBar().showMessage("Not implemented yet", 2500)
 
@@ -373,3 +477,17 @@ class MainWindow(QMainWindow):
             "<h3>TemplateGenerator</h3>"
             "<p>Graphical editor for Heroes of Might and Magic: Olden Era random-map templates.</p>",
         )
+
+
+class _DocumentTab(QWidget):
+    def __init__(self, document: Document) -> None:
+        super().__init__()
+        self.document = document
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._variant_tabs = VariantTabBar(document.session)
+        self._scene = GraphScene(document.session)
+        self._view = GraphView(self._scene)
+        layout.addWidget(self._variant_tabs)
+        layout.addWidget(self._view, stretch=1)

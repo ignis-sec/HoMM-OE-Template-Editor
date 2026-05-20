@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from templategen.catalog.game_data import GameDataCatalog
     from templategen.model.template import Template
-    from templategen.services.session import EditorSession
+    from templategen.services.workspace import Workspace
 
 
 @dataclass
@@ -46,7 +46,7 @@ class _Field:
 class TemplateSettingsDialog(QDialog):
     def __init__(
         self,
-        session: EditorSession,
+        session: Workspace,
         template: Template,
         catalog: GameDataCatalog,
         parent: QWidget | None = None,
@@ -233,7 +233,7 @@ class TemplateSettingsDialog(QDialog):
         return widget
 
 class _BansTab(QWidget):
-    def __init__(self, session: EditorSession, template: Template) -> None:
+    def __init__(self, session: Workspace, template: Template) -> None:
         super().__init__()
         self._session = session
         self._template = template
@@ -279,7 +279,7 @@ def _populate_bonus_row(
     form: QFormLayout,
     bonus: Bonus,
     refreshers: list[Any],
-    session: EditorSession,
+    session: Workspace,
     catalog: GameDataCatalog,
 ) -> None:
     sid = SidPicker(bonus, "sid", session, choices=catalog.known_bonus_sids)
@@ -304,7 +304,7 @@ def _populate_value_override_row(
     form: QFormLayout,
     override: ValueOverride,
     refreshers: list[Any],
-    session: EditorSession,
+    session: Workspace,
     catalog: GameDataCatalog,
 ) -> None:
     sid = SidPicker(override, "sid", session, choices=catalog.known_sids)
@@ -324,7 +324,7 @@ def _populate_value_override_row(
 
 
 class _BonusesTab(QWidget):
-    def __init__(self, session: EditorSession, template: Template, catalog: GameDataCatalog) -> None:
+    def __init__(self, session: Workspace, template: Template, catalog: GameDataCatalog) -> None:
         super().__init__()
         self._session = session
         self._template = template
@@ -348,7 +348,7 @@ class _BonusesTab(QWidget):
 
 
 class _ValueOverridesTab(QWidget):
-    def __init__(self, session: EditorSession, template: Template, catalog: GameDataCatalog) -> None:
+    def __init__(self, session: Workspace, template: Template, catalog: GameDataCatalog) -> None:
         super().__init__()
         self._session = session
         self._template = template

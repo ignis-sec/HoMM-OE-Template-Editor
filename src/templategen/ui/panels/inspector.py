@@ -67,7 +67,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from templategen.catalog.game_data import GameDataCatalog
-    from templategen.services.session import EditorSession
+    from templategen.services.workspace import Workspace
     from templategen.ui.widgets.field_binding import Refresh
 
 
@@ -92,9 +92,9 @@ def _describe(target: object) -> str:
 
 
 class Inspector(QWidget):
-    def __init__(self, session: EditorSession, catalog: GameDataCatalog) -> None:
+    def __init__(self, workspace: Workspace, catalog: GameDataCatalog) -> None:
         super().__init__()
-        self._session = session
+        self._session = workspace
         self._catalog = catalog
         self._view_stack: list[object] = []
         self._refreshers: list[Refresh] = []
@@ -112,9 +112,9 @@ class Inspector(QWidget):
         self._inner: QWidget | None = None
         self._main: QVBoxLayout | None = None
 
-        session.selection_changed.connect(self._on_selection_changed)
-        session.template_changed.connect(lambda: self._on_selection_changed(None))
-        session.model_object_changed.connect(self._on_model_changed)
+        workspace.selection_changed.connect(self._on_selection_changed)
+        workspace.template_changed.connect(lambda: self._on_selection_changed(None))
+        workspace.model_object_changed.connect(self._on_model_changed)
         catalog.changed.connect(self._render_current)
 
         self._render_current()
