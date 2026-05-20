@@ -18,6 +18,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Upgrade pip
+        shell: bash
+        run: python -m pip install --upgrade pip
+
       - name: Install project (with all dependencies)
         shell: bash
         run: pip install --verbose .
@@ -45,13 +49,6 @@ jobs:
             --log-level INFO `
             --add-data "src/templategen/img;templategen/img" `
             --add-data "data/catalog.json;data" `
-            --collect-all PySide6 `
-            --collect-all shiboken6 `
-            --collect-all qtawesome `
-            --collect-all qdarktheme `
-            --collect-all scipy `
-            --collect-all networkx `
-            --collect-all pydantic `
             --collect-submodules templategen `
             launch.py
 
