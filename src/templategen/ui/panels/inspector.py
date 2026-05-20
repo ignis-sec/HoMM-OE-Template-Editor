@@ -657,10 +657,14 @@ class Inspector(QWidget):
             ("Road", lambda: Road(**{"from": Anchor(type="MainObject"), "to": Anchor(type="MainObject")})),
         ]
 
+        def anchor_str(anchor: Anchor) -> str:
+            args = list(anchor.args) if anchor.args else []
+            return f"{anchor.type}[{', '.join(str(a) for a in args)}]" if args else anchor.type
+
         def summary(road: object) -> str:
             assert isinstance(road, Road)
             type_text = road.type.value if road.type else "no road"
-            return f"{type_text}: {road.from_.type} → {road.to.type}"
+            return f"{type_text}: {anchor_str(road.from_)} → {anchor_str(road.to)}"
 
         return SubObjectListEditor(
             zone,

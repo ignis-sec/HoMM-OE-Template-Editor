@@ -183,6 +183,8 @@ class SubObjectListEditor(QWidget):
         self._summary = summary
         self._on_drill_in = on_drill_in
 
+        session.model_object_changed.connect(self._on_model_changed)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(2)
@@ -218,6 +220,14 @@ class SubObjectListEditor(QWidget):
             return
         for index, sub_obj in enumerate(current):
             self._rows.addWidget(self._build_row(index, sub_obj))
+
+    def _on_model_changed(self, obj: object) -> None:
+        if obj is self._target:
+            self.refresh()
+            return
+        current = getattr(self._target, self._field, None)
+        if isinstance(current, list) and any(item is obj for item in current):
+            self.refresh()
 
     def _build_row(self, index: int, sub_obj: Any) -> QWidget:
         row = QWidget()

@@ -91,6 +91,67 @@ class RemoveListItemCommand(Command):
         self._session.model_object_changed.emit(self._owner)
 
 
+class AddVariantCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        template: Any,
+        variant: Any,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or "Add variant")
+        self._template = template
+        self._variant = variant
+        self._prev_index: int | None = None
+
+    def redo(self) -> None:
+        self._prev_index = self._session.current_variant_index
+        self._template.variants.append(self._variant)
+        self._session.model_object_changed.emit(self._template)
+        self._session.set_current_variant_index(len(self._template.variants) - 1)
+
+    def undo(self) -> None:
+        if self._variant in self._template.variants:
+            self._template.variants.remove(self._variant)
+        if self._prev_index is not None and self._template.variants:
+            target = min(self._prev_index, len(self._template.variants) - 1)
+            self._session.set_current_variant_index(target)
+        self._session.model_object_changed.emit(self._template)
+
+
+class RemoveVariantCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        template: Any,
+        index: int,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Remove variant {index + 1}")
+        self._template = template
+        self._index = index
+        self._removed: Any = None
+        self._prev_current: int | None = None
+
+    def redo(self) -> None:
+        if not 0 <= self._index < len(self._template.variants):
+            return
+        self._prev_current = self._session.current_variant_index
+        self._removed = self._template.variants.pop(self._index)
+        if self._template.variants:
+            new_current = min(self._prev_current, len(self._template.variants) - 1)
+            self._session.set_current_variant_index(new_current)
+        self._session.model_object_changed.emit(self._template)
+
+    def undo(self) -> None:
+        if self._removed is None:
+            return
+        self._template.variants.insert(self._index, self._removed)
+        if self._prev_current is not None:
+            self._session.set_current_variant_index(self._prev_current)
+        self._session.model_object_changed.emit(self._template)
+
+
 class AddZoneCommand(Command):
     def redo(self) -> None:
         raise NotImplementedError

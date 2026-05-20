@@ -20,9 +20,14 @@ from PySide6.QtWidgets import (
 )
 
 from templategen.catalog.builder import CatalogBuildError, build_snapshot, write_snapshot
+from templategen.model.enums import OrientationMode
+from templategen.model.variant import Orientation, Variant
+from templategen.services.commands import AddVariantCommand, RemoveVariantCommand
+from templategen.services.validator import Validator
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
 from templategen.ui.dialogs.template_settings import TemplateSettingsDialog
+from templategen.ui.dialogs.validation_results import ValidationResultsDialog
 from templategen.ui.panels.explorer import CatalogExplorer
 from templategen.ui.panels.inspector import Inspector
 from templategen.ui.panels.library import LibraryPanel
@@ -108,14 +113,14 @@ class MainWindow(QMainWindow):
         self.action_redo.triggered.connect(self._workspace.redo)
 
         self.action_add_variant = QAction(self._icons.get("add_variant"), "&Add Variant", self)
-        self.action_add_variant.triggered.connect(self._not_implemented)
+        self.action_add_variant.triggered.connect(self._on_add_variant)
 
         self.action_remove_variant = QAction(self._icons.get("remove_variant"), "&Remove Current Variant", self)
-        self.action_remove_variant.triggered.connect(self._not_implemented)
+        self.action_remove_variant.triggered.connect(self._on_remove_variant)
 
         self.action_validate = QAction(self._icons.get("validate"), "&Validate", self)
         self.action_validate.setShortcut("F5")
-        self.action_validate.triggered.connect(self._not_implemented)
+        self.action_validate.triggered.connect(self._on_validate)
 
         self.action_template_settings = QAction(self._icons.get("settings"), "Template &Settings…", self)
         self.action_template_settings.triggered.connect(self._on_template_settings)
@@ -397,6 +402,38 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         event.accept()
+
+    def _on_add_variant(self) -> None:
+        template = self._workspace.template
+        if template is None:
+            self.statusBar().showMessage("Open a template first", 2500)
+            return
+        variant = Variant(orientation=Orientation(mode=OrientationMode.MINIMAL_BOUNDING_SQUARE))
+        self._workspace.execute(AddVariantCommand(self._workspace, template, variant))
+
+    def _on_remove_variant(self) -> None:
+        template = self._workspace.template
+        if template is None:
+            self.statusBar().showMessage("Open a template first", 2500)
+            return
+        if len(template.variants) <= 1:
+            QMessageBox.information(
+                self,
+                "Cannot remove variant",
+                "A template must have at least one variant.",
+            )
+            return
+        idx = self._workspace.current_variant_index
+        self._workspace.execute(RemoveVariantCommand(self._workspace, template, idx))
+
+    def _on_validate(self) -> None:
+        template = self._workspace.template
+        if template is None:
+            self.statusBar().showMessage("Open a template first", 2500)
+            return
+        issues = Validator().validate(template)
+        dialog = ValidationResultsDialog(issues, self._workspace.set_selection, self)
+        dialog.exec()
 
     def _on_template_settings(self) -> None:
         if self._workspace.template is None:

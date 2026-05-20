@@ -3,7 +3,7 @@
 from typing import Final
 
 from PySide6.QtCore import QLineF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QStyleOptionGraphicsItem, QWidget
 
 from templategen.model.connection import (
@@ -21,6 +21,8 @@ _DEFAULT_PEN: Final[QPen] = QPen(QColor("#bcbcc4"), 1.8)
 _PORTAL_PEN: Final[QPen] = QPen(QColor("#c8a0ff"), 1.8, Qt.PenStyle.DashLine)
 _PROXIMITY_PEN: Final[QPen] = QPen(QColor("#5b6068"), 1.0, Qt.PenStyle.DotLine)
 _ARENA_PEN: Final[QPen] = QPen(QColor("#e07070"), 3.0)
+
+_HIT_TOLERANCE: Final[float] = 8.0
 
 
 def _pen_for(connection: _StyledConnection) -> QPen:
@@ -65,7 +67,17 @@ class EdgeItem(QGraphicsObject):
 
     def boundingRect(self) -> QRectF:
         line = self._line()
-        return QRectF(line.p1(), line.p2()).normalized().adjusted(-6, -6, 6, 6)
+        margin = _HIT_TOLERANCE
+        return QRectF(line.p1(), line.p2()).normalized().adjusted(-margin, -margin, margin, margin)
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        line = self._line()
+        path.moveTo(line.p1())
+        path.lineTo(line.p2())
+        stroker = QPainterPathStroker()
+        stroker.setWidth(_HIT_TOLERANCE)
+        return stroker.createStroke(path)
 
     def paint(
         self,

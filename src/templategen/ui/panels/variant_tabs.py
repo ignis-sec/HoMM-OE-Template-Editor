@@ -2,6 +2,7 @@
 
 from PySide6.QtWidgets import QTabBar
 
+from templategen.model.template import Template
 from templategen.services.session import EditorSession
 
 
@@ -15,9 +16,14 @@ class VariantTabBar(QTabBar):
 
         session.template_changed.connect(self._rebuild)
         session.current_variant_changed.connect(self._on_session_changed)
+        session.model_object_changed.connect(self._on_model_changed)
         self.currentChanged.connect(self._on_user_changed)
 
         self._rebuild()
+
+    def _on_model_changed(self, obj: object) -> None:
+        if isinstance(obj, Template):
+            self._rebuild()
 
     def _rebuild(self) -> None:
         self._suppress_signal = True

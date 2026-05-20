@@ -221,6 +221,7 @@ class LibraryPanel(QWidget):
                 f"Paste {new_item.name}",
             )
         )
+        self._select_model(new_item)
 
     # ─── Per-item operations ──────────────────────────────────────────────
 
@@ -253,6 +254,7 @@ class LibraryPanel(QWidget):
                 f"Duplicate {new_item.name}",
             )
         )
+        self._select_model(new_item)
 
     def _remove_item(self, item: QTreeWidgetItem) -> None:
         model = item.data(_NAME_COLUMN, _MODEL_ROLE)
@@ -279,47 +281,42 @@ class LibraryPanel(QWidget):
         if template is None:
             return
         name = _unique_name("new_zone_layout", [zl.name for zl in template.zoneLayouts])
+        new_item = ZoneLayout(name=name)
         self._session.execute(
-            AddListItemCommand(
-                self._session,
-                template,
-                "zoneLayouts",
-                ZoneLayout(name=name),
-                f"Add zone layout {name}",
-            )
+            AddListItemCommand(self._session, template, "zoneLayouts", new_item, f"Add zone layout {name}")
         )
+        self._select_model(new_item)
 
     def _add_mandatory_content(self) -> None:
         template = self._session.template
         if template is None:
             return
         name = _unique_name("new_content", [b.name for b in template.mandatoryContent])
+        new_item = MandatoryContentBundle(name=name)
         self._session.execute(
-            AddListItemCommand(
-                self._session,
-                template,
-                "mandatoryContent",
-                MandatoryContentBundle(name=name),
-                f"Add content bundle {name}",
-            )
+            AddListItemCommand(self._session, template, "mandatoryContent", new_item, f"Add content bundle {name}")
         )
+        self._select_model(new_item)
 
     def _add_content_count_limit(self) -> None:
         template = self._session.template
         if template is None:
             return
         name = _unique_name("new_limit", [c.name for c in template.contentCountLimits])
+        new_item = ContentCountLimit(name=name)
         self._session.execute(
-            AddListItemCommand(
-                self._session,
-                template,
-                "contentCountLimits",
-                ContentCountLimit(name=name),
-                f"Add count limit {name}",
-            )
+            AddListItemCommand(self._session, template, "contentCountLimits", new_item, f"Add count limit {name}")
         )
+        self._select_model(new_item)
 
     # ─── Helpers ──────────────────────────────────────────────────────────
+
+    def _select_model(self, model: object) -> None:
+        item = self._items_by_model_id.get(id(model))
+        if item is None:
+            return
+        self._tree.setCurrentItem(item)
+        self._tree.scrollToItem(item)
 
     def _selected_item(self) -> QTreeWidgetItem | None:
         items = self._tree.selectedItems()
