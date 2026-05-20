@@ -55,7 +55,12 @@ class _ListEditorBase(QWidget):
         self._add_button.clicked.connect(self._on_add)
         outer.addWidget(self._add_button, alignment=outer.alignment())
 
+        session.model_object_changed.connect(self._on_model_changed)
         self.refresh()
+
+    def _on_model_changed(self, obj: object) -> None:
+        if obj is self._target:
+            self.refresh()
 
     def refresh(self) -> None:
         while self._rows.count():

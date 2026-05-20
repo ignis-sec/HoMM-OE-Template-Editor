@@ -25,7 +25,11 @@ from templategen.model.enums import GameMode
 from templategen.model.game_rules import Bonus, GlobalBans, ValueOverride, WinConditions
 from templategen.services.commands import EditFieldCommand
 from templategen.ui.widgets.field_binding import bind_int, bind_string
-from templategen.ui.widgets.list_editors import InlineSubObjectListEditor, ScalarListEditor
+from templategen.ui.widgets.list_editors import (
+    InlineSubObjectListEditor,
+    ReferenceListEditor,
+    ScalarListEditor,
+)
 from templategen.ui.widgets.sid_picker import SidPicker
 
 if TYPE_CHECKING:
@@ -141,7 +145,7 @@ class TemplateSettingsDialog(QDialog):
         return widget
 
     def _build_bans_tab(self) -> QWidget:
-        return _BansTab(self._session, self._template)
+        return _BansTab(self._session, self._template, self._catalog)
 
     def _build_bonuses_tab(self) -> QWidget:
         return _BonusesTab(self._session, self._template, self._catalog)
@@ -233,10 +237,11 @@ class TemplateSettingsDialog(QDialog):
         return widget
 
 class _BansTab(QWidget):
-    def __init__(self, session: Workspace, template: Template) -> None:
+    def __init__(self, session: Workspace, template: Template, catalog: GameDataCatalog) -> None:
         super().__init__()
         self._session = session
         self._template = template
+        self._catalog = catalog
         self._layout = QVBoxLayout(self)
         self._rebuild()
         session.model_object_changed.connect(self._on_model_changed)
@@ -263,10 +268,11 @@ class _BansTab(QWidget):
             return
 
         bans = self._template.globalBans
+        choices = lambda: list(self._catalog.known_sids())  # noqa: E731
         self._layout.addWidget(QLabel("Banned magics:"))
-        self._layout.addWidget(ScalarListEditor(bans, "magics", self._session))
+        self._layout.addWidget(ReferenceListEditor(bans, "magics", self._session, choices=choices))
         self._layout.addWidget(QLabel("Banned items:"))
-        self._layout.addWidget(ScalarListEditor(bans, "items", self._session))
+        self._layout.addWidget(ReferenceListEditor(bans, "items", self._session, choices=choices))
         self._layout.addStretch()
 
     def _initialize(self) -> None:

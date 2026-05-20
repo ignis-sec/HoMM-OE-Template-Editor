@@ -38,6 +38,17 @@ class ZoneItem(QGraphicsObject):
         self.setToolTip(self._zone.name)
         self.update()
 
+    def update_style(self, radius: float, fill: QColor) -> None:
+        if radius == self._radius and fill == self._fill:
+            return
+        if radius != self._radius:
+            self.prepareGeometryChange()
+            self._radius = radius
+        self._fill = fill
+        self.update()
+        for edge in self._edges:
+            edge.update_endpoints()
+
     def add_edge(self, edge: EdgeItem) -> None:
         self._edges.append(edge)
 

@@ -6,6 +6,7 @@ from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QGraphicsScene
 
 from templategen.model.variant import Variant
+from templategen.model.zone import Zone
 from templategen.services.session import EditorSession
 from templategen.ui.canvas.connection_item import EdgeItem
 from templategen.ui.canvas.layout import compute_layout
@@ -97,9 +98,36 @@ class GraphScene(QGraphicsScene):
         if isinstance(obj, Variant) and obj is self.current_variant:
             self.rebuild()
             return
+        if isinstance(obj, Zone) and obj.name in self._zone_items:
+            self._zone_items[obj.name].refresh()
+            self._restyle_zones()
+            return
+        if self._is_in_current_variant_zone(obj):
+            self._restyle_zones()
+            return
         for item in self.items():
             if getattr(item, "model_target", None) is obj:
                 refresh = getattr(item, "refresh", None)
                 if callable(refresh):
                     refresh()
                 return
+
+    def _restyle_zones(self) -> None:
+        variant = self.current_variant
+        if variant is None:
+            return
+        styles = compute_zone_styles(variant)
+        for name, item in self._zone_items.items():
+            style = styles.get(name)
+            if style is not None:
+                item.update_style(style.radius, style.fill)
+
+    def _is_in_current_variant_zone(self, obj: object) -> bool:
+        variant = self.current_variant
+        if variant is None:
+            return False
+        for zone in variant.zones:
+            for mo in zone.mainObjects:
+                if mo is obj:
+                    return True
+        return False
