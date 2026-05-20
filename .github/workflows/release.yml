@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build Windows executable
+        run: >
+          pyinstaller
+          --name templategen
+          --onefile
+          --windowed
+          --noconfirm
+          --paths src
+          --add-data "src/templategen/img;templategen/img"
+          --add-data "data/catalog.json;data"
+          --collect-submodules templategen
+          src/templategen/app.py
+
+      - name: Rename artifact with version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          Move-Item dist/templategen.exe "dist/templategen-$tag-windows.exe"
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: templategen-windows
+          path: dist/templategen-*-windows.exe
+
+  package-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build source archive
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          git archive --format=zip --prefix="templategen-${tag}/" -o "templategen-${tag}-source.zip" HEAD
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: templategen-source
+          path: templategen-*-source.zip
+
+  release:
+    needs: [build-windows, package-source]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: templategen-windows
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: templategen-source
+          path: dist
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/templategen-*-windows.exe
+            dist/templategen-*-source.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
