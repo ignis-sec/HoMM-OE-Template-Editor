@@ -23,6 +23,9 @@ class _ConnectionBase(RmgModel):
     simTurnSquad: bool | None = None
     gatePlacement: str | None = None
 
+    def model_post_init(self, __context: object) -> None:
+        self.__pydantic_fields_set__.add("connectionType")
+
 
 class DirectConnection(_ConnectionBase):
     connectionType: Literal[ConnectionType.DIRECT] = ConnectionType.DIRECT

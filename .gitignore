@@ -28,6 +28,7 @@ htmlcov/
 # Project-specific
 example-templates/*
 tmp_scripts/*
+game-data/*
 
 # Secrets / logs
 .env

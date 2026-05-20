@@ -40,6 +40,57 @@ class EditFieldCommand(Command):
         self._session.model_object_changed.emit(self._target)
 
 
+class AddListItemCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        owner: object,
+        field: str,
+        item: Any,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Add {type(item).__name__}")
+        self._owner = owner
+        self._field = field
+        self._item = item
+
+    def redo(self) -> None:
+        getattr(self._owner, self._field).append(self._item)
+        self._session.model_object_changed.emit(self._owner)
+
+    def undo(self) -> None:
+        getattr(self._owner, self._field).remove(self._item)
+        self._session.model_object_changed.emit(self._owner)
+
+
+class RemoveListItemCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        owner: object,
+        field: str,
+        item: Any,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Remove {type(item).__name__}")
+        self._owner = owner
+        self._field = field
+        self._item = item
+        self._index: int | None = None
+
+    def redo(self) -> None:
+        collection: list[Any] = getattr(self._owner, self._field)
+        self._index = collection.index(self._item)
+        collection.pop(self._index)
+        self._session.model_object_changed.emit(self._owner)
+
+    def undo(self) -> None:
+        if self._index is None:
+            return
+        getattr(self._owner, self._field).insert(self._index, self._item)
+        self._session.model_object_changed.emit(self._owner)
+
+
 class AddZoneCommand(Command):
     def redo(self) -> None:
         raise NotImplementedError

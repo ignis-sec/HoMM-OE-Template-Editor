@@ -26,6 +26,9 @@ class _MainObjectBase(RmgModel):
     enableWeeklyUnitIncrement: bool | None = None
     initialUnitIncrement: float | None = None
 
+    def model_post_init(self, __context: Any) -> None:
+        self.__pydantic_fields_set__.add("type")
+
 
 class SpawnObject(_MainObjectBase):
     type: Literal[MainObjectType.SPAWN] = MainObjectType.SPAWN

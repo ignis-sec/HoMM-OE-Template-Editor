@@ -111,5 +111,11 @@ class EditorSession(QObject):
     def redo(self) -> None:
         self._undo_stack.redo()
 
+    def begin_macro(self, text: str) -> None:
+        self._undo_stack.beginMacro(text)
+
+    def end_macro(self) -> None:
+        self._undo_stack.endMacro()
+
     def _on_clean_changed(self, clean: bool) -> None:
         self.dirty_changed.emit(not clean)

@@ -15,20 +15,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from templategen.catalog.builder import CatalogBuildError, build_snapshot, write_snapshot
+from templategen.catalog.game_data import GameDataCatalog
 from templategen.services.session import EditorSession
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
+from templategen.ui.dialogs.template_settings import TemplateSettingsDialog
 from templategen.ui.icons import IconRegistry
+from templategen.ui.panels.explorer import CatalogExplorer
 from templategen.ui.panels.inspector import Inspector
 from templategen.ui.panels.library import LibraryPanel
 from templategen.ui.panels.variant_tabs import VariantTabBar
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, session: EditorSession, icons: IconRegistry) -> None:
+    def __init__(self, session: EditorSession, icons: IconRegistry, catalog: GameDataCatalog) -> None:
         super().__init__()
         self._session = session
         self._icons = icons
+        self._catalog = catalog
 
         self.setWindowTitle("TemplateGenerator")
         self.resize(1400, 900)
@@ -90,7 +95,16 @@ class MainWindow(QMainWindow):
         self.action_validate.triggered.connect(self._not_implemented)
 
         self.action_template_settings = QAction(self._icons.get("settings"), "Template &Settings…", self)
-        self.action_template_settings.triggered.connect(self._not_implemented)
+        self.action_template_settings.triggered.connect(self._on_template_settings)
+
+        self.action_rebuild_catalog = QAction("&Rebuild Catalog from game-data…", self)
+        self.action_rebuild_catalog.triggered.connect(self._on_rebuild_catalog)
+
+        self.action_reload_catalog = QAction("Re&load Catalog snapshot", self)
+        self.action_reload_catalog.triggered.connect(self._on_reload_catalog)
+
+        self.action_show_explorer = QAction("Show &Catalog Explorer", self)
+        self.action_show_explorer.triggered.connect(self._on_show_explorer)
 
         self.action_about = QAction(self._icons.get("about"), "&About TemplateGenerator", self)
         self.action_about.triggered.connect(self._show_about)
@@ -140,6 +154,12 @@ class MainWindow(QMainWindow):
         menu_template.addAction(self.action_validate)
         menu_template.addAction(self.action_template_settings)
 
+        menu_tools = bar.addMenu("&Tools")
+        menu_tools.addAction(self.action_show_explorer)
+        menu_tools.addSeparator()
+        menu_tools.addAction(self.action_rebuild_catalog)
+        menu_tools.addAction(self.action_reload_catalog)
+
         menu_help = bar.addMenu("&Help")
         menu_help.addAction(self.action_about)
         menu_help.addAction(self.action_about_qt)
@@ -167,17 +187,35 @@ class MainWindow(QMainWindow):
         )
         self._inspector_dock = self._make_dock(
             "Inspector",
-            Inspector(self._session),
+            Inspector(self._session, self._catalog),
             Qt.DockWidgetArea.RightDockWidgetArea,
         )
+        self._explorer = CatalogExplorer(self._catalog)
+        self._explorer_dock = self._make_dock(
+            "Catalog Explorer",
+            self._explorer,
+            Qt.DockWidgetArea.BottomDockWidgetArea,
+            allowed_areas=Qt.DockWidgetArea.AllDockWidgetAreas,
+        )
+        self._explorer_dock.setVisible(False)
 
         self.menu_view.addAction(self._library_dock.toggleViewAction())
         self.menu_view.addAction(self._inspector_dock.toggleViewAction())
+        self.menu_view.addAction(self._explorer_dock.toggleViewAction())
 
-    def _make_dock(self, title: str, content: QWidget, area: Qt.DockWidgetArea) -> QDockWidget:
+    def _make_dock(
+        self,
+        title: str,
+        content: QWidget,
+        area: Qt.DockWidgetArea,
+        *,
+        allowed_areas: Qt.DockWidgetArea | None = None,
+    ) -> QDockWidget:
         dock = QDockWidget(title, self)
         dock.setWidget(content)
-        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        if allowed_areas is None:
+            allowed_areas = Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        dock.setAllowedAreas(allowed_areas)
         self.addDockWidget(area, dock)
         return dock
 
@@ -284,6 +322,46 @@ class MainWindow(QMainWindow):
         cur = self._session.current_variant_index + 1
         total = len(template.variants)
         self._variant_label.setText(f"Variant {cur} of {total}")
+
+    def _on_template_settings(self) -> None:
+        if self._session.template is None:
+            self.statusBar().showMessage("Open a template first", 2500)
+            return
+        dialog = TemplateSettingsDialog(self._session, self._session.template, self._catalog, self)
+        dialog.exec()
+
+    def _on_rebuild_catalog(self) -> None:
+        default_dir = str(Path.cwd() / "game-data" / "Core")
+        if not Path(default_dir).exists():
+            default_dir = str(Path.cwd())
+        chosen = QFileDialog.getExistingDirectory(self, "Locate the game's Core folder", default_dir)
+        if not chosen:
+            return
+        try:
+            snapshot = build_snapshot(Path(chosen))
+            write_snapshot(snapshot, self._catalog.snapshot_path)
+        except (CatalogBuildError, OSError) as exc:
+            QMessageBox.critical(self, "Catalog rebuild failed", str(exc))
+            return
+        self._catalog.reload()
+        self.statusBar().showMessage(
+            f"Catalog rebuilt: {len(snapshot['sids'])} SIDs, "
+            f"{len(snapshot['content_lists'])} lists, "
+            f"{len(snapshot['content_pools'])} pools",
+            5000,
+        )
+
+    def _on_reload_catalog(self) -> None:
+        self._catalog.reload()
+        if self._catalog.is_loaded():
+            self.statusBar().showMessage("Catalog reloaded from snapshot", 3000)
+        else:
+            self.statusBar().showMessage("Catalog snapshot missing or empty", 4000)
+
+    def _on_show_explorer(self) -> None:
+        self._explorer_dock.setVisible(True)
+        self._explorer_dock.raise_()
+        self._explorer_dock.activateWindow()
 
     def _not_implemented(self) -> None:
         self.statusBar().showMessage("Not implemented yet", 2500)

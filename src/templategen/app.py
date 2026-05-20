@@ -5,6 +5,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from templategen import __version__
+from templategen.catalog.game_data import GameDataCatalog
 from templategen.infra.logging import configure_logging
 from templategen.services.session import EditorSession
 from templategen.ui.icons import IconRegistry
@@ -24,7 +25,8 @@ def main() -> int:
 
     session = EditorSession()
     icons = IconRegistry()
-    window = MainWindow(session, icons)
+    catalog = GameDataCatalog()
+    window = MainWindow(session, icons, catalog)
     window.show()
 
     return app.exec()

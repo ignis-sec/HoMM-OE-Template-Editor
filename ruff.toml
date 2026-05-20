@@ -59,6 +59,8 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "src/templategen/ui/**/*.py" = ["N802", "N803", "ARG002"]
 # Pydantic models: camelCase fields, `type` discriminator, list-default fields (Pydantic copies per instance).
 "src/templategen/model/**/*.py" = ["A003", "N815", "RUF012"]
+# CLI scripts: prints to stdout/stderr are intended.
+"scripts/**/*.py" = ["T201"]
 # Scratch scripts: don't lint.
 "tmp_scripts/**/*.py" = ["ALL"]
 
