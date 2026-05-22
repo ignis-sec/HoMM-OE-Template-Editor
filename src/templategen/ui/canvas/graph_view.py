@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QPainter, QWheelEvent
-from PySide6.QtWidgets import QGraphicsView
+from PySide6.QtGui import QAction, QContextMenuEvent, QKeyEvent, QMouseEvent, QPainter, QWheelEvent
+from PySide6.QtWidgets import QGraphicsView, QMenu
 
 from templategen.model.connection import DirectConnection
 from templategen.model.zone import Zone
@@ -17,6 +17,15 @@ from templategen.services.commands import (
     RemoveZoneCommand,
 )
 from templategen.services.naming import unique_connection_name, unique_zone_name
+from templategen.ui.canvas.alignment import (
+    align_circle,
+    align_horizontal,
+    align_line,
+    align_vertical,
+    distribute_along_line,
+    distribute_x,
+    distribute_y,
+)
 from templategen.ui.canvas.connection_item import EdgeItem
 from templategen.ui.canvas.zone_item import ZoneItem
 
@@ -123,6 +132,47 @@ class GraphView(QGraphicsView):
                 )
         finally:
             session.end_macro()
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        if self._connect_mode or self._place_mode:
+            super().contextMenuEvent(event)
+            return
+        selected_zones = [i for i in self._scene.selectedItems() if isinstance(i, ZoneItem)]
+        if len(selected_zones) < 2:
+            super().contextMenuEvent(event)
+            return
+
+        menu = QMenu(self)
+        align_actions = [
+            ("Align Horizontally", align_horizontal, 2),
+            ("Align Vertically", align_vertical, 2),
+            ("Align in a Line", align_line, 2),
+            ("Align in a Circle", align_circle, 3),
+        ]
+        distribute_actions = [
+            ("Set Equal Distance", distribute_along_line, 2),
+            ("Set Equal Distance (X)", distribute_x, 2),
+            ("Set Equal Distance (Y)", distribute_y, 2),
+        ]
+        for group in (align_actions, distribute_actions):
+            for label, op, min_zones in group:
+                action = QAction(label, menu)
+                action.setEnabled(len(selected_zones) >= min_zones)
+                action.triggered.connect(
+                    lambda _checked=False, zs=selected_zones, fn=op: self._apply_alignment(zs, fn)
+                )
+                menu.addAction(action)
+            if group is align_actions:
+                menu.addSeparator()
+
+        menu.exec(event.globalPos())
+        event.accept()
+
+    def _apply_alignment(self, zones: list[ZoneItem], op: object) -> None:
+        before = [(z.pos().x(), z.pos().y()) for z in zones]
+        after = op(before)
+        for zone, (nx, ny) in zip(zones, after, strict=True):
+            zone.setPos(nx, ny)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
