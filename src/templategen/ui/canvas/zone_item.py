@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QStyleOptionGraphicsItem, QWidget
+from PySide6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsObject,
+    QGraphicsSceneMouseEvent,
+    QStyleOptionGraphicsItem,
+    QWidget,
+)
 
 if TYPE_CHECKING:
-    from PySide6.QtCore import QPointF
-
     from templategen.model.zone import Zone
     from templategen.ui.canvas.connection_item import EdgeItem
 
@@ -25,6 +29,7 @@ class ZoneItem(QGraphicsObject):
         self._edges: list[EdgeItem] = []
         self._radius = radius
         self._fill = fill if fill is not None else QColor("#666b75")
+        self._drag_start: dict[str, QPointF] = {}
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
@@ -82,3 +87,52 @@ class ZoneItem(QGraphicsObject):
             for edge in self._edges:
                 edge.update_endpoints()
         return super().itemChange(change, value)
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            scene = self.scene()
+            if scene is not None:
+                # Capture starting positions for every zone that Qt will drag along with us
+                # (selected items move as a group). The clicked zone is always included even
+                # if it wasn't part of the selection — Qt selects-on-press in that case.
+                companions = [i for i in scene.selectedItems() if isinstance(i, ZoneItem)]
+                if self not in companions:
+                    companions = [self, *companions]
+                self._drag_start = {i._zone.name: QPointF(i.pos()) for i in companions}
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        super().mouseReleaseEvent(event)
+        if event.button() != Qt.MouseButton.LeftButton or not self._drag_start:
+            self._drag_start = {}
+            return
+        starts = self._drag_start
+        self._drag_start = {}
+        scene = self.scene()
+        if scene is None or not hasattr(scene, "session") or not hasattr(scene, "zone_items"):
+            return
+        items = scene.zone_items
+        moved: list[tuple[str, QPointF, QPointF]] = []
+        for name, start_pos in starts.items():
+            item = items.get(name)
+            if item is None:
+                continue
+            end_pos = item.pos()
+            if end_pos != start_pos:
+                moved.append((name, start_pos, end_pos))
+        if not moved:
+            return
+
+        from templategen.services.commands import MoveZoneCommand
+
+        session = scene.session
+        if len(moved) == 1:
+            name, start, end = moved[0]
+            session.execute(MoveZoneCommand(session, scene, name, start, end))
+            return
+        session.begin_macro(f"Move {len(moved)} zones")
+        try:
+            for name, start, end in moved:
+                session.execute(MoveZoneCommand(session, scene, name, start, end))
+        finally:
+            session.end_macro()

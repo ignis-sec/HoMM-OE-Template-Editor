@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from PySide6.QtCore import QPointF
 from PySide6.QtGui import QUndoCommand
 
 if TYPE_CHECKING:
     from templategen.services.session import EditorSession
+    from templategen.ui.canvas.graph_scene import GraphScene
 
 
 class Command(QUndoCommand):
@@ -226,6 +228,45 @@ class AddConnectionCommand(Command):
             self._variant.connections.remove(self._connection)
         self._session.model_object_changed.emit(self._variant)
         self._session.set_selection(None)
+
+
+class MoveZoneCommand(Command):
+    """Restores a ZoneItem's canvas position; positions aren't persisted in the model."""
+
+    def __init__(
+        self,
+        session: EditorSession,
+        scene: GraphScene,
+        zone_name: str,
+        old_pos: QPointF,
+        new_pos: QPointF,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Move zone {zone_name}")
+        self._scene = scene
+        self._zone_name = zone_name
+        self._old = QPointF(old_pos)
+        self._new = QPointF(new_pos)
+        self._first_redo = True
+
+    def redo(self) -> None:
+        # The drag itself already left the item at _new, so skip the initial redo;
+        # subsequent redos (after an undo) apply the move explicitly.
+        if self._first_redo:
+            self._first_redo = False
+            return
+        self._apply(self._new)
+
+    def undo(self) -> None:
+        self._apply(self._old)
+
+    def _apply(self, pos: QPointF) -> None:
+        items = getattr(self._scene, "zone_items", None)
+        if items is None:
+            return
+        item = items.get(self._zone_name)
+        if item is not None:
+            item.setPos(pos)
 
 
 class ChangeConnectionTypeCommand(Command):
