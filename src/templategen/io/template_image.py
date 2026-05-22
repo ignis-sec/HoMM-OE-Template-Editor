@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QLineF, QPointF
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
 
 from templategen.model.enums import ConnectionType
@@ -21,6 +21,7 @@ _IMG_DIR: Final[Path] = Path(__file__).resolve().parent.parent / "img"
 _PADDING: Final[int] = 68
 _CONNECTION_COLOR: Final[QColor] = QColor("#350f13")
 _CONNECTION_WIDTH: Final[int] = 3
+_PARALLEL_SPACING: Final[float] = 10.0
 
 
 def template_png_path(rmg_path: Path) -> Path:
@@ -63,14 +64,18 @@ def render_template_png(template: Template, output: Path, *, variant_index: int 
         pen = QPen(_CONNECTION_COLOR)
         pen.setWidth(_CONNECTION_WIDTH)
         painter.setPen(pen)
-        for conn in variant.connections:
-            if conn.connectionType not in (ConnectionType.DIRECT, ConnectionType.DEFAULT, ConnectionType.PORTAL):
-                continue
-            a = positions.get(conn.from_)
-            b = positions.get(conn.to)
-            if a is None or b is None:
-                continue
-            painter.drawLine(a, b)
+        drawn = [
+            c for c in variant.connections
+            if c.connectionType in (ConnectionType.DIRECT, ConnectionType.DEFAULT, ConnectionType.PORTAL)
+            and positions.get(c.from_) is not None
+            and positions.get(c.to) is not None
+        ]
+        edge_offsets = _connection_offsets(drawn)
+        for conn in drawn:
+            a = positions[conn.from_]
+            b = positions[conn.to]
+            offset = edge_offsets.get(id(conn), 0.0)
+            painter.drawLine(_offset_line(a, b, offset))
 
         for zone in variant.zones:
             pos = positions.get(zone.name)
@@ -93,6 +98,43 @@ def _draw_centered(painter: QPainter, img: QImage, pos: QPointF) -> None:
         QPointF(pos.x() - img.width() / 2, pos.y() - img.height() / 2),
         img,
     )
+
+
+def _connection_offsets(connections: list[object]) -> dict[int, float]:
+    groups: dict[frozenset[str], list[object]] = {}
+    for conn in connections:
+        key = frozenset({conn.from_, conn.to})  # type: ignore[attr-defined]
+        groups.setdefault(key, []).append(conn)
+
+    out: dict[int, float] = {}
+    for key, group in groups.items():
+        n = len(group)
+        if n == 1:
+            out[id(group[0])] = 0.0
+            continue
+        canonical = sorted(key)
+        canonical_from = canonical[0] if canonical else None
+        is_self_loop = len(canonical) < 2
+        for i, conn in enumerate(group):
+            base = (i - (n - 1) / 2.0) * _PARALLEL_SPACING
+            sign = 1.0 if is_self_loop or conn.from_ == canonical_from else -1.0  # type: ignore[attr-defined]
+            out[id(conn)] = base * sign
+    return out
+
+
+def _offset_line(a: QPointF, b: QPointF, offset: float) -> QLineF:
+    if abs(offset) < 1e-9:
+        return QLineF(a, b)
+    dx = b.x() - a.x()
+    dy = b.y() - a.y()
+    length = (dx * dx + dy * dy) ** 0.5
+    if length < 1e-9:
+        return QLineF(a, b)
+    nx = -dy / length
+    ny = dx / length
+    ox = nx * offset
+    oy = ny * offset
+    return QLineF(a.x() + ox, a.y() + oy, b.x() + ox, b.y() + oy)
 
 
 def _scaled_positions(variant: Variant, bg_w: int, bg_h: int) -> dict[str, QPointF]:

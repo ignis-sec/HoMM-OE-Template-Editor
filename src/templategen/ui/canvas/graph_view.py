@@ -239,9 +239,6 @@ class GraphView(QGraphicsView):
         variant = self._scene.current_variant
         if variant is None:
             return
-        for existing in variant.connections:
-            if existing.from_ == source.name and existing.to == target.name:
-                return
         session = self._scene.session
         name = unique_connection_name(variant, source.name, target.name)
         connection = DirectConnection(name=name, from_=source.name, to=target.name)
