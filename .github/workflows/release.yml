@@ -3,9 +3,14 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: [prerelease]
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-windows:
@@ -62,25 +67,41 @@ jobs:
           Write-Host ("exe size: {0:N1} MB" -f $size)
           if ($size -lt 30) { throw "exe is only ${size}MB — PySide6 was not bundled" }
 
-      - name: Rename artifact with version
+      - name: Stage release folder (exe + data + img)
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          Move-Item "dist/HoMM OE Template Editor.exe" "dist/HoMM OE Template Editor-$tag-windows.exe"
+          $stage = "release-staging/HoMM OE Template Editor-$tag-windows"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          New-Item -ItemType Directory -Force -Path "$stage/data" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$stage/img" | Out-Null
+          Move-Item "dist/HoMM OE Template Editor.exe" "$stage/HoMM OE Template Editor.exe"
+          Copy-Item "data/catalog.json" "$stage/data/catalog.json"
+          Copy-Item -Recurse "src/templategen/img/*" "$stage/img/"
+          Get-ChildItem $stage -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
 
-      - name: Log SHA-256 of the executable
+      - name: Zip release folder
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $exe = "dist/HoMM OE Template Editor-$tag-windows.exe"
-          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-          Write-Host "SHA-256 ($((Split-Path $exe -Leaf))): $hash"
+          $folder = "release-staging/HoMM OE Template Editor-$tag-windows"
+          $zip = "dist/HoMM OE Template Editor-$tag-windows.zip"
+          Compress-Archive -Path $folder -DestinationPath $zip
+          Write-Host "Zipped to $zip"
 
-      - name: Upload Windows executable
+      - name: Log SHA-256 of the release zip
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $zip = "dist/HoMM OE Template Editor-$tag-windows.zip"
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SHA-256 ($((Split-Path $zip -Leaf))): $hash"
+
+      - name: Upload Windows release zip
         uses: actions/upload-artifact@v4
         with:
           name: homm-oe-template-editor-windows
-          path: dist/HoMM OE Template Editor-*-windows.exe
+          path: dist/HoMM OE Template Editor-*-windows.zip
 
   package-source:
     runs-on: ubuntu-latest
@@ -115,8 +136,14 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          # Branch pushes use the fixed "prerelease" tag (replaces previous prerelease);
+          # tag pushes use the tag name itself (e.g. v0.0.7).
+          tag_name: ${{ github.ref_type == 'branch' && 'prerelease' || github.ref_name }}
+          name: ${{ github.ref_type == 'branch' && format('Prerelease ({0})', github.sha) || github.ref_name }}
+          prerelease: ${{ github.ref_type == 'branch' }}
+          target_commitish: ${{ github.sha }}
           files: |
-            dist/HoMM OE Template Editor-*-windows.exe
+            dist/HoMM OE Template Editor-*-windows.zip
             dist/HoMM OE Template Editor-*-source.zip
           generate_release_notes: true
           fail_on_unmatched_files: true

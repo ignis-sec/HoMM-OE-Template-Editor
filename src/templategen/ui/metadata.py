@@ -1,8 +1,20 @@
 
-VERSION = "v0.0.6"
+VERSION = "v0.0.7"
 CHANGELOG = """
-<h1 id="changelog">Changelog</h1>
-<h1 id="v0-0-6">v0.0.6</h1>
+<h1 id="changelog-v0-0-7">Changelog - v0.0.7</h1>
+<h2 id="new-features">New Features</h2>
+<ul>
+<li><p>Windows executable is now released as a zip file that also contains catalog.json and images.</p>
+</li>
+<li><p>Save zone positions in the editor canvas to the thumbnail exif so next time it is opened we can restore the same positions in editor (without adding junk to the template file)</p>
+</li>
+</ul>
+<h2 id="bugfixes">Bugfixes</h2>
+<ul>
+<li>Fixed catalog explorer and related autofills not working on windows executable.</li>
+</ul>
+<hr>
+<h1 id="changelog-v0-0-6">Changelog - v0.0.6</h1>
 <h2 id="new-features">New features</h2>
 <ul>
 <li>Added a context menu on the zone layout canvas that has various options for aligning selected zones:<ul>
@@ -22,8 +34,6 @@ CHANGELOG = """
 <li><p>You can now add multiple connections between same two zones.</p>
 </li>
 <li><p>Connection type between zones can now be changed in the inspector widget.</p>
-</li>
-<li><p>Added changelog to the &quot;about&quot; window.</p>
 </li>
 </ul>
 <h2 id="bugfixes">Bugfixes</h2>
@@ -48,5 +58,4 @@ CHANGELOG = """
 <ul>
 <li>CICD will not print checksum of generated executable so it can be easily compared to the executable in release</li>
 </ul>
-
 """

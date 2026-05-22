@@ -454,11 +454,20 @@ class MainWindow(QMainWindow):
         template = self._workspace.template
         if template is None:
             return
+        zone_positions: dict[str, tuple[float, float]] | None = None
+        if self._current_view is not None:
+            scene = self._current_view.scene()
+            items = getattr(scene, "zone_items", None)
+            if isinstance(items, dict):
+                zone_positions = {
+                    name: (item.pos().x(), item.pos().y()) for name, item in items.items()
+                }
         try:
             render_template_png(
                 template,
                 template_png_path(rmg_path),
                 variant_index=self._workspace.current_variant_index,
+                zone_positions=zone_positions,
             )
         except (OSError, FileNotFoundError) as exc:
             self.statusBar().showMessage(f"PNG export failed: {exc}", 4000)

@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack
 
 from templategen.io.loader import TemplateLoader
+from templategen.io.template_image import read_template_png_positions, template_png_path
 from templategen.io.writer import TemplateWriter
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ class EditorSession(QObject):
         self._path: Path | None = None
         self._current_variant_index: int = 0
         self._selection: object | None = None
+        self._loaded_positions: dict[str, tuple[float, float]] = {}
 
         self._undo_stack = QUndoStack(self)
         self._undo_stack.cleanChanged.connect(self._on_clean_changed)
@@ -71,11 +73,24 @@ class EditorSession(QObject):
         self._path = path
         self._current_variant_index = 0
         self._selection = None
+        # Restore zone positions from the sibling thumbnail's metadata if present.
+        # This is a "best effort" — missing/corrupt PNG simply falls back to layout.
+        self._loaded_positions = read_template_png_positions(template_png_path(path))
         self._undo_stack.clear()
         self.template_changed.emit()
         self.current_variant_changed.emit(0)
         self.selection_changed.emit(None)
         self.dirty_changed.emit(False)
+
+    @property
+    def loaded_positions(self) -> dict[str, tuple[float, float]]:
+        return self._loaded_positions
+
+    def consume_loaded_positions(self) -> dict[str, tuple[float, float]]:
+        """Hand off and clear the stored positions; called by the scene during initial rebuild."""
+        positions = self._loaded_positions
+        self._loaded_positions = {}
+        return positions
 
     def save(self, path: Path | None = None) -> None:
         if self._template is None:
