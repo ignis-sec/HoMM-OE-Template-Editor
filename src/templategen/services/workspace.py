@@ -83,8 +83,17 @@ class Workspace(QObject):
         return self._current.session.can_redo if self._current else False
 
     def execute(self, command: Command) -> None:
-        if self._current is not None:
-            self._current.session.execute(command)
+        if self._current is None:
+            return
+        # Commands are often constructed with the Workspace as their "session" (it duck-types
+        # EditorSession's public API). But Qt signals are per-instance, so emitting on the
+        # workspace's model_object_changed never reaches session-bound listeners like
+        # GraphScene. Rebind the command's _session to the active EditorSession so its emits
+        # land on the right signal; Workspace mirrors session signals back up via
+        # _connect_current, so workspace-bound listeners still hear them too.
+        if getattr(command, "_session", None) is self:
+            command._session = self._current.session
+        self._current.session.execute(command)
 
     def undo(self) -> None:
         if self._current is not None:

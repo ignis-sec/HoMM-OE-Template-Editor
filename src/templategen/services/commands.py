@@ -228,6 +228,50 @@ class AddConnectionCommand(Command):
         self._session.set_selection(None)
 
 
+class ChangeConnectionTypeCommand(Command):
+    def __init__(
+        self,
+        session: EditorSession,
+        variant: Any,
+        connection: Any,
+        new_class: type,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Change connection to {new_class.__name__}")
+        self._variant = variant
+        self._old = connection
+        self._new_class = new_class
+        self._new: Any = None
+        self._index: int | None = None
+
+    def redo(self) -> None:
+        self._index = self._variant.connections.index(self._old)
+        if self._new is None:
+            self._new = _migrate_connection(self._old, self._new_class)
+        self._variant.connections[self._index] = self._new
+        self._session.model_object_changed.emit(self._variant)
+        self._session.set_selection(self._new)
+
+    def undo(self) -> None:
+        if self._index is None:
+            return
+        self._variant.connections[self._index] = self._old
+        self._session.model_object_changed.emit(self._variant)
+        self._session.set_selection(self._old)
+
+
+def _migrate_connection(old: Any, new_class: type) -> Any:
+    data = old.model_dump(by_alias=True, exclude_unset=True)
+    data.pop("connectionType", None)
+    allowed: set[str] = set()
+    for field_name, field_info in new_class.model_fields.items():
+        allowed.add(field_name)
+        if field_info.alias:
+            allowed.add(field_info.alias)
+    filtered = {k: v for k, v in data.items() if k in allowed}
+    return new_class.model_validate(filtered)
+
+
 class RemoveConnectionCommand(Command):
     def __init__(
         self,
