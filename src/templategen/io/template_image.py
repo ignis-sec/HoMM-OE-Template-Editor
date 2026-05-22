@@ -131,18 +131,20 @@ def _zone_images(variant: Variant) -> tuple[dict[str, str], dict[str, str]]:
     base: dict[str, str] = {}
     overlay: dict[str, str] = {}
 
-    nonspawn: list[tuple[str, int]] = []
+    buckets: dict[int, list[str]] = {}
     for zone in variant.zones:
         spawn = _spawn_tile(zone)
         if spawn is not None:
             base[zone.name] = spawn
         else:
-            nonspawn.append((zone.name, _content_value(zone)))
+            buckets.setdefault(_content_value(zone), []).append(zone.name)
 
-    nonspawn.sort(key=lambda kv: kv[1])
-    n = len(nonspawn)
-    for i, (name, _value) in enumerate(nonspawn):
-        base[name] = _tier_tile(i, n)
+    sorted_values = sorted(buckets)
+    n_buckets = len(sorted_values)
+    for bucket_index, value in enumerate(sorted_values):
+        tile = _bucket_tile(bucket_index, n_buckets)
+        for name in buckets[value]:
+            base[name] = tile
 
     for zone in variant.zones:
         has_spawn = any(isinstance(mo, SpawnObject) for mo in zone.mainObjects)
@@ -161,9 +163,11 @@ def _spawn_tile(zone: Zone) -> str | None:
     return None
 
 
-def _tier_tile(index: int, total: int) -> str:
+def _bucket_tile(index: int, total: int) -> str:
     if total <= 1:
-        return "z-mid.png"
+        return "z-poor.png"
+    if total == 2:
+        return "z-poor.png" if index == 0 else "z-rich.png"
     rank = index / (total - 1)
     if rank <= 0.3:
         return "z-poor.png"
