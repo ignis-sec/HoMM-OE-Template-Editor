@@ -68,6 +68,14 @@ jobs:
           $tag = "${{ github.ref_name }}"
           Move-Item "dist/HoMM OE Template Editor.exe" "dist/HoMM OE Template Editor-$tag-windows.exe"
 
+      - name: Log SHA-256 of the executable
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exe = "dist/HoMM OE Template Editor-$tag-windows.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SHA-256 ($((Split-Path $exe -Leaf))): $hash"
+
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
