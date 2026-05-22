@@ -1,5 +1,20 @@
 # Changelog
 
+# v0.0.7
+
+## New Features
+
+* Windows executable is now released as a zip file that also contains catalog.json and images.
+
+* Save zone positions in the editor canvas to the thumbnail exif so next time it is opened we can restore the same positions in editor (without adding junk to the template file)
+
+
+## Bugfixes
+
+* Fixed catalog explorer and related autofills not working on windows executable.
+
+
+
 # v0.0.6
 
 ## New features
