@@ -110,26 +110,26 @@ class GraphView(QGraphicsView):
         if variant is None:
             return
 
-        zone_names = {z.model_target.name for z in zones}
-        cascade_edges: set[EdgeItem] = set()
-        if zones:
-            cascade_edges = {
-                edge for edge in self._all_edges()
-                if edge.model_target.from_ in zone_names or edge.model_target.to in zone_names
-            }
-        edges_to_remove = {*edges, *cascade_edges}
+        # Resolve everything to model objects up front. We never reuse the Qt items
+        # after the macro starts because mid-iteration scene rebuilds destroy them.
+        zones_to_remove = [z.model_target for z in zones]
+        zone_names = {z.name for z in zones_to_remove}
+        explicit_connections = [e.model_target for e in edges]
+        explicit_ids = {id(c) for c in explicit_connections}
+
+        cascade_connections = [
+            c for c in variant.connections
+            if id(c) not in explicit_ids and (c.from_ in zone_names or c.to in zone_names)
+        ]
+        connections_to_remove = explicit_connections + cascade_connections
 
         label = self._delete_label(zones, edges)
         session.begin_macro(label)
         try:
-            for edge in edges_to_remove:
-                session.execute(
-                    RemoveConnectionCommand(session, variant, edge.model_target)
-                )
-            for zone_item in zones:
-                session.execute(
-                    RemoveZoneCommand(session, variant, zone_item.model_target)
-                )
+            for connection in connections_to_remove:
+                session.execute(RemoveConnectionCommand(session, variant, connection))
+            for zone in zones_to_remove:
+                session.execute(RemoveZoneCommand(session, variant, zone))
         finally:
             session.end_macro()
 
@@ -260,9 +260,6 @@ class GraphView(QGraphicsView):
             if isinstance(item, ZoneItem):
                 return item
         return None
-
-    def _all_edges(self) -> list[EdgeItem]:
-        return [i for i in self._scene.items() if isinstance(i, EdgeItem)]
 
     def _delete_label(self, zones: list[ZoneItem], edges: list[EdgeItem]) -> str:
         if zones and not edges:
