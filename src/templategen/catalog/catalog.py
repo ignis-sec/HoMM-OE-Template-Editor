@@ -34,6 +34,12 @@ class ReferenceCatalog:
     def known_meta_object_sids(self) -> Sequence[str]:
         raise NotImplementedError
 
+    def known_artifact_sids(self) -> Sequence[str]:
+        raise NotImplementedError
+
+    def known_spell_sids(self) -> Sequence[str]:
+        raise NotImplementedError
+
     # ── detail lookups (for the explorer) ────────────────────────────────
     def get_content_list(self, name: str) -> dict[str, Any] | None:
         raise NotImplementedError

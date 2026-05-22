@@ -69,6 +69,8 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._portals = list(data.get("portals", []))
         self._resource_by_mine = dict(data.get("resource_by_mine", {}))
         self._water_for_biome = dict(data.get("water_for_biome", {}))
+        self._artifact_sids = list(data.get("artifact_sids", []))
+        self._spell_sids = list(data.get("spell_sids", []))
         self._build_indices()
         self.changed.emit()
 
@@ -83,6 +85,8 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._portals: list[str] = []
         self._resource_by_mine: dict[str, str] = {}
         self._water_for_biome: dict[str, str] = {}
+        self._artifact_sids: list[str] = []
+        self._spell_sids: list[str] = []
         self._sid_in_lists: dict[str, list[str]] = {}
         self._sid_in_pool_content: dict[str, list[str]] = {}
         self._sid_produced_by_pools: dict[str, list[str]] = {}
@@ -155,6 +159,12 @@ class GameDataCatalog(QObject, ReferenceCatalog):
 
     def known_meta_object_sids(self) -> Sequence[str]:
         return list(self._meta_objects.keys())
+
+    def known_artifact_sids(self) -> Sequence[str]:
+        return self._artifact_sids
+
+    def known_spell_sids(self) -> Sequence[str]:
+        return self._spell_sids
 
     # ── detail lookups ───────────────────────────────────────────────────
     def get_content_list(self, name: str) -> dict[str, Any] | None:

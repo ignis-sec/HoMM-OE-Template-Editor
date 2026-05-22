@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QPainter, QWheelEvent
-from PySide6.QtWidgets import QGraphicsView
+from PySide6.QtGui import QAction, QContextMenuEvent, QKeyEvent, QMouseEvent, QPainter, QWheelEvent
+from PySide6.QtWidgets import QGraphicsView, QMenu
 
 from templategen.model.connection import DirectConnection
 from templategen.model.zone import Zone
@@ -17,6 +17,15 @@ from templategen.services.commands import (
     RemoveZoneCommand,
 )
 from templategen.services.naming import unique_connection_name, unique_zone_name
+from templategen.ui.canvas.alignment import (
+    align_circle,
+    align_horizontal,
+    align_line,
+    align_vertical,
+    distribute_along_line,
+    distribute_x,
+    distribute_y,
+)
 from templategen.ui.canvas.connection_item import EdgeItem
 from templategen.ui.canvas.zone_item import ZoneItem
 
@@ -101,28 +110,69 @@ class GraphView(QGraphicsView):
         if variant is None:
             return
 
-        zone_names = {z.model_target.name for z in zones}
-        cascade_edges: set[EdgeItem] = set()
-        if zones:
-            cascade_edges = {
-                edge for edge in self._all_edges()
-                if edge.model_target.from_ in zone_names or edge.model_target.to in zone_names
-            }
-        edges_to_remove = {*edges, *cascade_edges}
+        # Resolve everything to model objects up front. We never reuse the Qt items
+        # after the macro starts because mid-iteration scene rebuilds destroy them.
+        zones_to_remove = [z.model_target for z in zones]
+        zone_names = {z.name for z in zones_to_remove}
+        explicit_connections = [e.model_target for e in edges]
+        explicit_ids = {id(c) for c in explicit_connections}
+
+        cascade_connections = [
+            c for c in variant.connections
+            if id(c) not in explicit_ids and (c.from_ in zone_names or c.to in zone_names)
+        ]
+        connections_to_remove = explicit_connections + cascade_connections
 
         label = self._delete_label(zones, edges)
         session.begin_macro(label)
         try:
-            for edge in edges_to_remove:
-                session.execute(
-                    RemoveConnectionCommand(session, variant, edge.model_target)
-                )
-            for zone_item in zones:
-                session.execute(
-                    RemoveZoneCommand(session, variant, zone_item.model_target)
-                )
+            for connection in connections_to_remove:
+                session.execute(RemoveConnectionCommand(session, variant, connection))
+            for zone in zones_to_remove:
+                session.execute(RemoveZoneCommand(session, variant, zone))
         finally:
             session.end_macro()
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        if self._connect_mode or self._place_mode:
+            super().contextMenuEvent(event)
+            return
+        selected_zones = [i for i in self._scene.selectedItems() if isinstance(i, ZoneItem)]
+        if len(selected_zones) < 2:
+            super().contextMenuEvent(event)
+            return
+
+        menu = QMenu(self)
+        align_actions = [
+            ("Align Horizontally", align_horizontal, 2),
+            ("Align Vertically", align_vertical, 2),
+            ("Align in a Line", align_line, 2),
+            ("Align in a Circle", align_circle, 3),
+        ]
+        distribute_actions = [
+            ("Set Equal Distance", distribute_along_line, 2),
+            ("Set Equal Distance (X)", distribute_x, 2),
+            ("Set Equal Distance (Y)", distribute_y, 2),
+        ]
+        for group in (align_actions, distribute_actions):
+            for label, op, min_zones in group:
+                action = QAction(label, menu)
+                action.setEnabled(len(selected_zones) >= min_zones)
+                action.triggered.connect(
+                    lambda _checked=False, zs=selected_zones, fn=op: self._apply_alignment(zs, fn)
+                )
+                menu.addAction(action)
+            if group is align_actions:
+                menu.addSeparator()
+
+        menu.exec(event.globalPos())
+        event.accept()
+
+    def _apply_alignment(self, zones: list[ZoneItem], op: object) -> None:
+        before = [(z.pos().x(), z.pos().y()) for z in zones]
+        after = op(before)
+        for zone, (nx, ny) in zip(zones, after, strict=True):
+            zone.setPos(nx, ny)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
@@ -189,9 +239,6 @@ class GraphView(QGraphicsView):
         variant = self._scene.current_variant
         if variant is None:
             return
-        for existing in variant.connections:
-            if existing.from_ == source.name and existing.to == target.name:
-                return
         session = self._scene.session
         name = unique_connection_name(variant, source.name, target.name)
         connection = DirectConnection(name=name, from_=source.name, to=target.name)
@@ -210,9 +257,6 @@ class GraphView(QGraphicsView):
             if isinstance(item, ZoneItem):
                 return item
         return None
-
-    def _all_edges(self) -> list[EdgeItem]:
-        return [i for i in self._scene.items() if isinstance(i, EdgeItem)]
 
     def _delete_label(self, zones: list[ZoneItem], edges: list[EdgeItem]) -> str:
         if zones and not edges:

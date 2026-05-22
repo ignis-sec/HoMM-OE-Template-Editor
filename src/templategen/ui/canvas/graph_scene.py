@@ -15,6 +15,7 @@ from templategen.ui.canvas.zone_style import compute_zone_styles
 
 _SCENE_SIZE: Final[float] = 1200.0
 _LAYOUT_SCALE: Final[float] = 500.0
+_PARALLEL_SPACING: Final[float] = 12.0
 
 
 class GraphScene(QGraphicsScene):
@@ -79,12 +80,13 @@ class GraphScene(QGraphicsScene):
             self.addItem(item)
             self._zone_items[zone.name] = item
 
+        offsets_by_id = _parallel_offsets(variant.connections)
         for conn in variant.connections:
             source = self._zone_items.get(conn.from_)
             target = self._zone_items.get(conn.to)
             if source is None or target is None:
                 continue
-            edge = EdgeItem(conn, source, target)
+            edge = EdgeItem(conn, source, target, parallel_offset=offsets_by_id.get(id(conn), 0.0))
             self.addItem(edge)
 
         self.update()
@@ -131,3 +133,32 @@ class GraphScene(QGraphicsScene):
                 if mo is obj:
                     return True
         return False
+
+
+def _parallel_offsets(connections: list[object]) -> dict[int, float]:
+    """Compute a per-edge perpendicular offset for groups of parallel connections.
+
+    Connections in the same unordered (from, to) group share a fanout. Each connection's
+    perpendicular vector flips when its from_/to are swapped, so the offset sign must
+    flip too — otherwise A→B and B→A would land on opposite sides of the centerline
+    instead of fanning out together.
+    """
+    groups: dict[frozenset[str], list[object]] = {}
+    for conn in connections:
+        key = frozenset({conn.from_, conn.to})  # type: ignore[attr-defined]
+        groups.setdefault(key, []).append(conn)
+
+    offsets: dict[int, float] = {}
+    for key, group in groups.items():
+        n = len(group)
+        if n == 1:
+            offsets[id(group[0])] = 0.0
+            continue
+        canonical = sorted(key)
+        canonical_from = canonical[0] if canonical else None
+        is_self_loop = len(canonical) < 2
+        for i, conn in enumerate(group):
+            base = (i - (n - 1) / 2.0) * _PARALLEL_SPACING
+            sign = 1.0 if is_self_loop or conn.from_ == canonical_from else -1.0  # type: ignore[attr-defined]
+            offsets[id(conn)] = base * sign
+    return offsets

@@ -9,12 +9,15 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QFileDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
     QTabWidget,
+    QTextBrowser,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -30,6 +33,7 @@ from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
 from templategen.ui.dialogs.template_settings import TemplateSettingsDialog
 from templategen.ui.dialogs.validation_results import ValidationResultsDialog
+from templategen.ui.metadata import CHANGELOG, VERSION
 from templategen.ui.panels.explorer import CatalogExplorer
 from templategen.ui.panels.inspector import Inspector
 from templategen.ui.panels.library import LibraryPanel
@@ -617,12 +621,32 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Not implemented yet", 2500)
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            "About HoMM:OE Template Editor",
-            "<h3>HoMM:OE Template Editor</h3>"
-            "<p>Graphical editor for Heroes of Might and Magic: Olden Era random-map templates.</p>",
+        author_line = '<h4>Author: Ata "Ignis" Hakçıl</h4></br>'  # noqa: RUF001
+        body = (
+            "<h3>HoMM:OE Template Editor</h3></br>"
+            "<p>Graphical editor for Heroes of Might and Magic: Olden Era random-map templates.</p>"
+            f"{author_line}"
+            '<a href="https://github.com/ignis-sec/HoMM-OE-Template-Editor">Project Link</a></br>'
+            f"<p>Version {VERSION}</p></br>"
+            f"{CHANGELOG}"
         )
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("About HoMM:OE Template Editor")
+        dialog.resize(720, 560)
+
+        layout = QVBoxLayout(dialog)
+        browser = QTextBrowser(dialog)
+        browser.setOpenExternalLinks(True)
+        browser.setHtml(body)
+        layout.addWidget(browser, stretch=1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=dialog)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+
+        dialog.exec()
 
 
 class _DocumentTab(QWidget):

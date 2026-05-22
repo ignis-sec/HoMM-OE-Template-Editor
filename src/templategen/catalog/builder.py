@@ -24,9 +24,11 @@ class CatalogSnapshot(TypedDict):
     portals: list[str]
     resource_by_mine: dict[str, str]
     water_for_biome: dict[str, str]
+    artifact_sids: list[str]
+    spell_sids: list[str]
 
 
-SCHEMA_VERSION: Final[int] = 2
+SCHEMA_VERSION: Final[int] = 3
 
 _BONUS_SIDS: Final[list[str]] = [
     "add_bonus_hero_item",
@@ -52,6 +54,7 @@ class CatalogBuildError(Exception):
 
 def build_snapshot(core_path: Path) -> CatalogSnapshot:
     generator_root = _resolve_generator_root(core_path)
+    core_root = generator_root.parent
 
     content_lists = _collect_content_lists(generator_root)
     content_pools = _collect_content_pools(generator_root)
@@ -60,6 +63,8 @@ def build_snapshot(core_path: Path) -> CatalogSnapshot:
     portals = _collect_portals(generator_root)
     resource_by_mine = _collect_resource_by_mine(generator_root)
     water_for_biome = _collect_water_for_biome(generator_root)
+    artifact_sids = _collect_artifact_sids(core_root)
+    spell_sids = _collect_spell_sids(core_root)
 
     sids = sorted(_collect_sids(generator_root, content_lists, content_pools, meta_objects))
 
@@ -77,6 +82,8 @@ def build_snapshot(core_path: Path) -> CatalogSnapshot:
         portals=portals,
         resource_by_mine=resource_by_mine,
         water_for_biome=water_for_biome,
+        artifact_sids=artifact_sids,
+        spell_sids=spell_sids,
     )
 
 
@@ -96,7 +103,41 @@ def _resolve_generator_root(core_path: Path) -> Path:
 
 
 def _read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Some game-data files ship with a UTF-8 BOM; utf-8-sig handles both forms.
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def _collect_array_ids(directory: Path) -> list[str]:
+    if not directory.is_dir():
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for path in sorted(directory.glob("*.json")):
+        if path.name.startswith("test_"):
+            continue
+        try:
+            data = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        entries = data.get("array") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            sid = entry.get("id")
+            if isinstance(sid, str) and sid not in seen:
+                seen.add(sid)
+                out.append(sid)
+    return out
+
+
+def _collect_artifact_sids(core_root: Path) -> list[str]:
+    return _collect_array_ids(core_root / "DB" / "items" / "items")
+
+
+def _collect_spell_sids(core_root: Path) -> list[str]:
+    return _collect_array_ids(core_root / "DB" / "magics")
 
 
 def _collect_content_lists(root: Path) -> dict[str, dict[str, Any]]:

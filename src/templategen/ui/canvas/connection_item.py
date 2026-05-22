@@ -38,12 +38,20 @@ def _pen_for(connection: _StyledConnection) -> QPen:
 
 
 class EdgeItem(QGraphicsObject):
-    def __init__(self, connection: _StyledConnection, source: ZoneItem, target: ZoneItem) -> None:
+    def __init__(
+        self,
+        connection: _StyledConnection,
+        source: ZoneItem,
+        target: ZoneItem,
+        *,
+        parallel_offset: float = 0.0,
+    ) -> None:
         super().__init__()
         self._connection = connection
         self._source = source
         self._target = target
         self._pen = _pen_for(connection)
+        self._parallel_offset = parallel_offset
         self.setZValue(-1)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setToolTip(connection.name or f"{connection.from_} → {connection.to}")
@@ -62,8 +70,29 @@ class EdgeItem(QGraphicsObject):
         self.prepareGeometryChange()
         self.update()
 
+    def set_parallel_offset(self, offset: float) -> None:
+        if offset == self._parallel_offset:
+            return
+        self.prepareGeometryChange()
+        self._parallel_offset = offset
+        self.update()
+
     def _line(self) -> QLineF:
-        return QLineF(self._source.center(), self._target.center())
+        a = self._source.center()
+        b = self._target.center()
+        if abs(self._parallel_offset) < 1e-9:
+            return QLineF(a, b)
+        dx = b.x() - a.x()
+        dy = b.y() - a.y()
+        length = (dx * dx + dy * dy) ** 0.5
+        if length < 1e-9:
+            return QLineF(a, b)
+        # Unit perpendicular vector to the base line; rotated +90°.
+        nx = -dy / length
+        ny = dx / length
+        ox = nx * self._parallel_offset
+        oy = ny * self._parallel_offset
+        return QLineF(a.x() + ox, a.y() + oy, b.x() + ox, b.y() + oy)
 
     def boundingRect(self) -> QRectF:
         line = self._line()

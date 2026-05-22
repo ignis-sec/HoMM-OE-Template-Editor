@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -22,7 +22,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from templategen.model.connection import ProximityConnection, _ConnectionBase
+from templategen.model.connection import (
+    DefaultConnection,
+    DirectConnection,
+    GladiatorArenaConnection,
+    PortalConnection,
+    ProximityConnection,
+    _ConnectionBase,
+)
 from templategen.model.content import (
     Anchor,
     ContentCountLimit,
@@ -31,7 +38,7 @@ from templategen.model.content import (
     MandatoryContentBundle,
     PlacementRule,
 )
-from templategen.model.enums import MainObjectType, Placement, PlayerId
+from templategen.model.enums import ConnectionType, MainObjectType, Placement, PlayerId, RoadType
 from templategen.model.game_rules import Bonus, ValueOverride
 from templategen.model.layouts import (
     AmbientPickupDistribution,
@@ -48,6 +55,7 @@ from templategen.model.main_objects import (
 )
 from templategen.model.selectors import BiomeSelector, FactionSelector
 from templategen.model.zone import EncounterHolesSettings, Road, Zone
+from templategen.services.commands import ChangeConnectionTypeCommand
 from templategen.ui.widgets.field_binding import (
     bind_bool,
     bind_choice,
@@ -76,6 +84,14 @@ _PLACEMENT_VALUES = [p.value for p in Placement]
 _BIOME_TYPES = ["FromList", "Match", "MatchMainObject", "MatchZone"]
 _FACTION_TYPES = ["FromList", "Match"]
 _ANCHOR_TYPES = ["MainObject", "Connection", "Crossroads", "Road", "Sid", "MandatoryContent"]
+
+_CONNECTION_CLASS_BY_TYPE: dict[ConnectionType, type[_ConnectionBase]] = {
+    ConnectionType.DIRECT: DirectConnection,
+    ConnectionType.DEFAULT: DefaultConnection,
+    ConnectionType.PORTAL: PortalConnection,
+    ConnectionType.PROXIMITY: ProximityConnection,
+    ConnectionType.GLADIATOR_ARENA: GladiatorArenaConnection,
+}
 
 
 def _readonly(text: str) -> QLabel:
@@ -313,7 +329,8 @@ class Inspector(QWidget):
 
     def _populate_connection(self, conn: _ConnectionBase) -> None:
         form = self._section()
-        form.addRow("Kind:", _readonly(f"Connection ({conn.connectionType.value})"))
+        form.addRow("Kind:", _readonly("Connection"))
+        form.addRow("Type:", self._connection_type_picker(conn))
         form.addRow("Name:", self._line(conn, "name", optional=True))
         form.addRow("From:", _readonly(conn.from_))
         form.addRow("To:", _readonly(conn.to))
@@ -556,11 +573,40 @@ class Inspector(QWidget):
     ) -> None:
         combo = QComboBox()
         refreshers.append(bind_choice(combo, anchor, "type", self._session, _ANCHOR_TYPES))
+        # Switching the anchor's type changes which kind of args editor is appropriate,
+        # so trigger a full re-render of the current view when the user picks a new type.
+        # Defer via QTimer so we don't delete the combo from inside its own signal handler
+        # (which would segfault when Qt unwinds back through the destroyed widget).
+        combo.activated.connect(lambda _idx: QTimer.singleShot(0, self._render_current))
         form.addRow("Type:", combo)
 
-        args = ScalarListEditor(anchor, "args", self._session)
+        if anchor.type == "Connection":
+            zone, variant = self._zone_for_anchor(anchor)
+            if zone is not None and variant is not None:
+                conn_names = [
+                    c.name for c in variant.connections
+                    if c.name and (c.from_ == zone.name or c.to == zone.name)
+                ]
+                args: QWidget = ReferenceListEditor(
+                    anchor, "args", self._session, choices=lambda names=conn_names: names
+                )
+            else:
+                args = ScalarListEditor(anchor, "args", self._session)
+        else:
+            args = ScalarListEditor(anchor, "args", self._session)
         refreshers.append(args.refresh)
         form.addRow("Args:", args)
+
+    def _zone_for_anchor(self, anchor: Anchor) -> tuple[Zone | None, object | None]:
+        template = self._session.template
+        if template is None:
+            return None, None
+        for variant in template.variants:
+            for zone in variant.zones:
+                for road in zone.roads or []:
+                    if road.from_ is anchor or road.to is anchor:
+                        return zone, variant
+        return None, None
 
     def _populate_encounter_holes(
         self,
@@ -654,7 +700,16 @@ class Inspector(QWidget):
 
     def _road_list(self, zone: Zone) -> SubObjectListEditor:
         factories: list[tuple[str, Callable[[], object]]] = [
-            ("Road", lambda: Road(**{"from": Anchor(type="MainObject"), "to": Anchor(type="MainObject")})),
+            (
+                "Road",
+                lambda: Road(
+                    type=RoadType.STONE,
+                    **{
+                        "from": Anchor(type="MainObject", args=["0"]),
+                        "to": Anchor(type="MainObject", args=["0"]),
+                    },
+                ),
+            ),
         ]
 
         def anchor_str(anchor: Anchor) -> str:
@@ -799,6 +854,34 @@ class Inspector(QWidget):
         widget = SidPicker(target, field, self._session, choices=self._catalog.known_sids)
         self._refreshers.append(widget.refresh)
         return widget
+
+    def _connection_type_picker(self, conn: _ConnectionBase) -> QComboBox:
+        widget = QComboBox()
+        values = list(_CONNECTION_CLASS_BY_TYPE)
+        widget.addItems([t.value for t in values])
+        widget.setCurrentIndex(values.index(conn.connectionType))
+
+        def on_changed(_index: int) -> None:
+            picked = values[widget.currentIndex()]
+            if picked == conn.connectionType:
+                return
+            variant = self._find_variant_containing(conn)
+            if variant is None:
+                return
+            new_class = _CONNECTION_CLASS_BY_TYPE[picked]
+            self._session.execute(ChangeConnectionTypeCommand(self._session, variant, conn, new_class))
+
+        widget.activated.connect(on_changed)
+        return widget
+
+    def _find_variant_containing(self, conn: _ConnectionBase) -> object | None:
+        template = self._session.template
+        if template is None:
+            return None
+        for variant in template.variants:
+            if any(c is conn for c in variant.connections):
+                return variant
+        return None
 
     def _editable_combo(
         self,
