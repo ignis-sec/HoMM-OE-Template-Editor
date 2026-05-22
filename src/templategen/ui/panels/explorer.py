@@ -27,8 +27,10 @@ _CATEGORY_LABELS: Final[dict[str, str]] = {
     "pools": "Content Pools",
     "sids": "SIDs",
     "meta": "Meta Objects",
+    "artifacts": "Artifacts",
+    "spells": "Spells",
 }
-_CATEGORY_ORDER: Final[list[str]] = ["lists", "pools", "sids", "meta"]
+_CATEGORY_ORDER: Final[list[str]] = ["lists", "pools", "sids", "meta", "artifacts", "spells"]
 
 
 class CatalogExplorer(QWidget):
@@ -131,6 +133,10 @@ class _CategoryTab(QWidget):
             return sorted(self._catalog.known_sids())
         if self._category == "meta":
             return sorted(self._catalog.known_meta_object_sids())
+        if self._category == "artifacts":
+            return sorted(self._catalog.known_artifact_sids())
+        if self._category == "spells":
+            return sorted(self._catalog.known_spell_sids())
         return []
 
     def _apply_filter(self, text: str) -> None:
@@ -152,6 +158,8 @@ class _CategoryTab(QWidget):
             html = self._render_sid(name)
         elif self._category == "meta":
             html = self._render_meta(name)
+        elif self._category in ("artifacts", "spells"):
+            html = self._render_artifact_or_spell(name)
         else:
             html = ""
         self._detail.setHtml(html)
@@ -161,7 +169,14 @@ class _CategoryTab(QWidget):
         if ":" not in target:
             return
         kind, name = target.split(":", 1)
-        category = {"list": "lists", "pool": "pools", "sid": "sids", "meta": "meta"}.get(kind)
+        category = {
+            "list": "lists",
+            "pool": "pools",
+            "sid": "sids",
+            "meta": "meta",
+            "artifact": "artifacts",
+            "spell": "spells",
+        }.get(kind)
         if category is not None:
             self._navigate(category, name)
 
@@ -239,6 +254,22 @@ class _CategoryTab(QWidget):
             parts.append(f"<h4>{escape(label)} ({len(names)})</h4>")
             parts.append("<p>" + (_link_list(link_kind, names) if names else "<em>none</em>") + "</p>")
 
+        return "".join(parts)
+
+    def _render_artifact_or_spell(self, name: str) -> str:
+        kind_label = "Artifact" if self._category == "artifacts" else "Spell"
+        parts = [
+            f"<h3>{escape(name)}</h3>",
+            f"<p><em>{kind_label} SID</em></p>",
+        ]
+        for label, names, link_kind in (
+            ("Lists containing it", self._catalog.lists_containing(name), "list"),
+            ("Pools that include it directly", self._catalog.pools_with_direct_sid(name), "pool"),
+            ("Pools that can produce it (transitive)", self._catalog.pools_producing(name), "pool"),
+            ("Pools banning it", self._catalog.pools_banning(name), "pool"),
+        ):
+            parts.append(f"<h4>{escape(label)} ({len(names)})</h4>")
+            parts.append("<p>" + (_link_list(link_kind, names) if names else "<em>none</em>") + "</p>")
         return "".join(parts)
 
     def _render_meta(self, name: str) -> str:

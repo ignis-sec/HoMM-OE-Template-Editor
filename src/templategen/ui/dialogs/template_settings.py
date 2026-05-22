@@ -268,11 +268,12 @@ class _BansTab(QWidget):
             return
 
         bans = self._template.globalBans
-        choices = lambda: list(self._catalog.known_sids())  # noqa: E731
+        spell_choices = lambda: list(self._catalog.known_spell_sids())  # noqa: E731
+        artifact_choices = lambda: list(self._catalog.known_artifact_sids())  # noqa: E731
         self._layout.addWidget(QLabel("Banned magics:"))
-        self._layout.addWidget(ReferenceListEditor(bans, "magics", self._session, choices=choices))
+        self._layout.addWidget(ReferenceListEditor(bans, "magics", self._session, choices=spell_choices))
         self._layout.addWidget(QLabel("Banned items:"))
-        self._layout.addWidget(ReferenceListEditor(bans, "items", self._session, choices=choices))
+        self._layout.addWidget(ReferenceListEditor(bans, "items", self._session, choices=artifact_choices))
         self._layout.addStretch()
 
     def _initialize(self) -> None:
