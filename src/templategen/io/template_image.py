@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -15,6 +16,10 @@ if TYPE_CHECKING:
     from templategen.model.template import Template
     from templategen.model.variant import Variant
     from templategen.model.zone import Zone
+
+_POSITIONS_KEY: Final[str] = "TemplateGenZonePositions"
+_CREATED_WITH_KEY: Final[str] = "created with"
+_CREATED_WITH_VALUE: Final[str] = "https://github.com/ignis-sec/HoMM-OE-Template-Editor"
 
 
 _IMG_DIR: Final[Path] = Path(__file__).resolve().parent.parent / "img"
@@ -31,7 +36,17 @@ def template_png_path(rmg_path: Path) -> Path:
     return rmg_path.with_name(f"{stem}.png")
 
 
-def render_template_png(template: Template, output: Path, *, variant_index: int = 0) -> None:
+def render_template_png(
+    template: Template,
+    output: Path,
+    *,
+    variant_index: int = 0,
+    zone_positions: dict[str, tuple[float, float]] | None = None,
+) -> None:
+    """Render the template thumbnail. If `zone_positions` is provided, the rendering uses
+    those scene-coordinate positions (so the PNG reflects what's on the canvas) and the
+    same map is embedded as a PNG text chunk for round-trip persistence on the next open.
+    """
     if not template.variants:
         return
     idx = variant_index if 0 <= variant_index < len(template.variants) else 0
@@ -50,7 +65,11 @@ def render_template_png(template: Template, output: Path, *, variant_index: int 
             image_cache[name] = QImage(str(_IMG_DIR / name))
         return image_cache[name]
 
-    positions = _scaled_positions(variant, bg.width(), bg.height())
+    if zone_positions:
+        source_positions = {name: (xy[0], xy[1]) for name, xy in zone_positions.items()}
+    else:
+        source_positions = _layout_positions(variant)
+    positions = _fit_positions(source_positions, bg.width(), bg.height())
     base_image, overlay_image = _zone_images(variant)
 
     canvas = QImage(bg.size(), QImage.Format.Format_ARGB32)
@@ -88,7 +107,44 @@ def render_template_png(template: Template, output: Path, *, variant_index: int 
     finally:
         painter.end()
 
+    canvas.setText(_CREATED_WITH_KEY, _CREATED_WITH_VALUE)
+    if zone_positions:
+        canvas.setText(
+            _POSITIONS_KEY,
+            json.dumps(
+                {name: [float(xy[0]), float(xy[1])] for name, xy in zone_positions.items()},
+                separators=(",", ":"),
+            ),
+        )
+
     canvas.save(str(output), "PNG")
+
+
+def read_template_png_positions(path: Path) -> dict[str, tuple[float, float]]:
+    """Return scene-coord zone positions stored in a sibling PNG, or {} if absent."""
+    if not path.exists():
+        return {}
+    img = QImage(str(path))
+    if img.isNull():
+        return {}
+    raw = img.text(_POSITIONS_KEY)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, tuple[float, float]] = {}
+    for name, xy in data.items():
+        if not isinstance(name, str) or not isinstance(xy, list) or len(xy) != 2:
+            continue
+        try:
+            out[name] = (float(xy[0]), float(xy[1]))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _draw_centered(painter: QPainter, img: QImage, pos: QPointF) -> None:
@@ -137,12 +193,27 @@ def _offset_line(a: QPointF, b: QPointF, offset: float) -> QLineF:
     return QLineF(a.x() + ox, a.y() + oy, b.x() + ox, b.y() + oy)
 
 
-def _scaled_positions(variant: Variant, bg_w: int, bg_h: int) -> dict[str, QPointF]:
+def _layout_positions(variant: Variant) -> dict[str, tuple[float, float]]:
+    """Default fallback: positions from the Kamada-Kawai layout."""
     from templategen.ui.canvas.layout import compute_layout
 
-    positions = compute_layout(variant)
+    return dict(compute_layout(variant))
+
+
+def _fit_positions(
+    positions: dict[str, tuple[float, float]],
+    bg_w: int,
+    bg_h: int,
+) -> dict[str, QPointF]:
+    """Linearly fit a (possibly scene-coord) position set into the padded bg area."""
     if not positions:
         return {}
+
+    cx = bg_w / 2
+    cy = bg_h / 2
+    if len(positions) == 1:
+        only = next(iter(positions))
+        return {only: QPointF(cx, cy)}
 
     xs = [p[0] for p in positions.values()]
     ys = [p[1] for p in positions.values()]
@@ -153,12 +224,6 @@ def _scaled_positions(variant: Variant, bg_w: int, bg_h: int) -> dict[str, QPoin
 
     avail_x = bg_w - 2 * _PADDING
     avail_y = bg_h - 2 * _PADDING
-    cx = bg_w / 2
-    cy = bg_h / 2
-
-    if len(positions) == 1:
-        only = next(iter(positions))
-        return {only: QPointF(cx, cy)}
 
     return {
         name: QPointF(

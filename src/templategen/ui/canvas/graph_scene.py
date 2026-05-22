@@ -57,6 +57,13 @@ class GraphScene(QGraphicsScene):
 
     def rebuild(self) -> None:
         prior_positions = {name: item.pos() for name, item in self._zone_items.items()}
+        loaded_positions: dict[str, tuple[float, float]] = {}
+        if not prior_positions:
+            # On the first rebuild after load() the scene has no items yet, so prior_positions
+            # is empty. Consume any positions restored from the sibling PNG metadata here.
+            consume = getattr(self._session, "consume_loaded_positions", None)
+            if callable(consume):
+                loaded_positions = consume()
         self.clear()
         self._zone_items.clear()
 
@@ -74,6 +81,9 @@ class GraphScene(QGraphicsScene):
                 item.setPos(self._pending_positions.pop(zone.name))
             elif zone.name in prior_positions:
                 item.setPos(prior_positions[zone.name])
+            elif zone.name in loaded_positions:
+                lx, ly = loaded_positions[zone.name]
+                item.setPos(QPointF(lx, ly))
             else:
                 x, y = layout_positions[zone.name]
                 item.setPos(x * _LAYOUT_SCALE, y * _LAYOUT_SCALE)
