@@ -21,6 +21,18 @@ if TYPE_CHECKING:
     from templategen.catalog.catalog import ReferenceCatalog
 
 
+_qicon_cache: dict[str, QIcon] = {}
+
+
+def _cached_qicon(path: Path) -> QIcon:
+    key = str(path)
+    icon = _qicon_cache.get(key)
+    if icon is None:
+        icon = QIcon(key)
+        _qicon_cache[key] = icon
+    return icon
+
+
 def artifact_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
     artifact = catalog.get_artifact(sid)
     if artifact is None:
@@ -34,7 +46,7 @@ def artifact_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
 
 def artifact_qicon(catalog: ReferenceCatalog, sid: str) -> QIcon | None:
     path = artifact_icon_path(catalog, sid)
-    return QIcon(str(path)) if path is not None else None
+    return _cached_qicon(path) if path is not None else None
 
 
 def artifact_listable(catalog: ReferenceCatalog, sid: str) -> ListableItem:
@@ -68,7 +80,7 @@ def spell_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
 
 def spell_qicon(catalog: ReferenceCatalog, sid: str) -> QIcon | None:
     path = spell_icon_path(catalog, sid)
-    return QIcon(str(path)) if path is not None else None
+    return _cached_qicon(path) if path is not None else None
 
 
 def spell_listable(catalog: ReferenceCatalog, sid: str) -> ListableItem:
@@ -101,7 +113,7 @@ def interactable_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
 
 def interactable_qicon(catalog: ReferenceCatalog, sid: str) -> QIcon | None:
     path = interactable_icon_path(catalog, sid)
-    return QIcon(str(path)) if path is not None else None
+    return _cached_qicon(path) if path is not None else None
 
 
 def interactable_listable(catalog: ReferenceCatalog, sid: str) -> ListableItem:
@@ -134,7 +146,7 @@ def resource_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
 
 def resource_qicon(catalog: ReferenceCatalog, sid: str) -> QIcon | None:
     path = resource_icon_path(catalog, sid)
-    return QIcon(str(path)) if path is not None else None
+    return _cached_qicon(path) if path is not None else None
 
 
 def resource_listable(catalog: ReferenceCatalog, sid: str) -> ListableItem:
@@ -161,7 +173,7 @@ def fraction_icon_path(fraction: str) -> Path | None:
 
 def fraction_qicon(fraction: str) -> QIcon | None:
     path = fraction_icon_path(fraction)
-    return QIcon(str(path)) if path is not None else None
+    return _cached_qicon(path) if path is not None else None
 
 
 def fraction_listable(fraction: str) -> ListableItem:
