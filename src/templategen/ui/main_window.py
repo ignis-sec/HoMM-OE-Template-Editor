@@ -253,6 +253,18 @@ class MainWindow(QMainWindow):
             Inspector(self._workspace, self._catalog),
             Qt.DockWidgetArea.RightDockWidgetArea,
         )
+        # The catalog explorer is expensive to construct (~1.5 s of Qt layout work for
+        # the ~1800 list-widget items across all eight tabs). It's hidden by default, so
+        # we build it lazily the first time the user opens it — keeps startup snappy.
+        self._explorer: CatalogExplorer | None = None
+        self._explorer_dock: QDockWidget | None = None
+
+        self.menu_view.addAction(self._library_dock.toggleViewAction())
+        self.menu_view.addAction(self._inspector_dock.toggleViewAction())
+
+    def _ensure_explorer_dock(self) -> QDockWidget:
+        if self._explorer_dock is not None and self._explorer is not None:
+            return self._explorer_dock
         self._explorer = CatalogExplorer(self._catalog)
         self._explorer_dock = self._make_dock(
             "Catalog Explorer",
@@ -260,11 +272,8 @@ class MainWindow(QMainWindow):
             Qt.DockWidgetArea.BottomDockWidgetArea,
             allowed_areas=Qt.DockWidgetArea.AllDockWidgetAreas,
         )
-        self._explorer_dock.setVisible(False)
-
-        self.menu_view.addAction(self._library_dock.toggleViewAction())
-        self.menu_view.addAction(self._inspector_dock.toggleViewAction())
         self.menu_view.addAction(self._explorer_dock.toggleViewAction())
+        return self._explorer_dock
 
     def _make_dock(
         self,
@@ -581,9 +590,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Catalog snapshot missing or empty", 4000)
 
     def _on_show_explorer(self) -> None:
-        self._explorer_dock.setVisible(True)
-        self._explorer_dock.raise_()
-        self._explorer_dock.activateWindow()
+        dock = self._ensure_explorer_dock()
+        dock.setVisible(True)
+        dock.raise_()
+        dock.activateWindow()
 
     def _on_template_changed(self) -> None:
         template = self._workspace.template

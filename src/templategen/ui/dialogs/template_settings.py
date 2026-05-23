@@ -13,10 +13,12 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -583,8 +585,18 @@ class _ValueOverridesTab(QWidget):
         super().__init__()
         self._session = session
         self._template = template
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 8, 8, 8)
 
         if template.valueOverrides is None:
             template.valueOverrides = []
@@ -597,7 +609,9 @@ class _ValueOverridesTab(QWidget):
             populate=lambda form, obj, refs: _populate_value_override_row(form, obj, refs, session, catalog),
             title_for_item=lambda obj, idx: f"[{idx}] {obj.sid}",
         )
-        layout.addWidget(editor)
-        layout.addStretch()
+        body_layout.addWidget(editor)
+        body_layout.addStretch()
+
+        scroll.setWidget(body)
 
 
