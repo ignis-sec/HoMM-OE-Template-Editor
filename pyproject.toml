@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "templategen"
-version = "0.0.7"
+version = "0.1.0"
 description = "Graphical editor for Heroes of Might and Magic: Olden Era random-map templates"
 readme = "README.md"
 requires-python = ">=3.12"

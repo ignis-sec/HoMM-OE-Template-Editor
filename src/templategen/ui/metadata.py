@@ -1,7 +1,43 @@
 
-VERSION = "v0.0.7"
+VERSION = "v0.1.0"
 CHANGELOG = """
-<h1 id="changelog-v0-0-7">Changelog - v0.0.7</h1>
+<h1 id="changelog">Changelog</h1>
+<h1 id="v0-1-0-significant-changes">v0.1.0 - Significant Changes</h1>
+<h2 id="new-features">New Features</h2>
+<ul>
+<li><p>On first run, you&#39;ll be asked to enter the game install directory, and the editor will mine the game data as well as required thumbnail images to be used in the editor. You can chose not to, but you will lose the ability to use the catalog explorer, see icons for objects, spells and artifacts, and you will not have sid&#39;s fill dropdowns in editor fields.</p>
+</li>
+<li><p>All dropdowns now have names and thumbnails of list items for a better user experience.</p>
+</li>
+<li><p>Editor fields now correctly narrow down which sid types are allowed in which field instead of containing a list of everything in the game.</p>
+</li>
+<li><p>Properly implemented bonus selection in template settings.</p>
+</li>
+<li><p>Catalog explorer now shows detailed content about artifacts, spells, resources and map objects.</p>
+</li>
+</ul>
+<h2 id="improvements">Improvements</h2>
+<ul>
+<li><p>Faction selection fields are now proper dropdowns instead of free fields.</p>
+</li>
+<li><p>Road and Biome selection are now type-aware and will correctly display relevant options in the dropdowns based on which type was selected.</p>
+</li>
+<li><p>Changed the layout split direction for catalog explorer so its easier to use (list on left, details on right instead of top/bottom split)</p>
+</li>
+<li><p>Improved UX for content items elements on mandatory content lists and content limits.</p>
+</li>
+<li><p>Improved UI load times.</p>
+</li>
+</ul>
+<h2 id="bugfixes">Bugfixes</h2>
+<ul>
+<li><p>Removed empty type option from road types.</p>
+</li>
+<li><p>Value overrides tab on template editor is now scrollable and won&#39;t cause super long dialog windows that overflow the screen if there are too many overrides.</p>
+</li>
+</ul>
+<hr>
+<h1 id="v0-0-7">v0.0.7</h1>
 <h2 id="new-features">New Features</h2>
 <ul>
 <li><p>Windows executable is now released as a zip file that also contains catalog.json and images.</p>
@@ -13,8 +49,7 @@ CHANGELOG = """
 <ul>
 <li>Fixed catalog explorer and related autofills not working on windows executable.</li>
 </ul>
-<hr>
-<h1 id="changelog-v0-0-6">Changelog - v0.0.6</h1>
+<h1 id="v0-0-6">v0.0.6</h1>
 <h2 id="new-features">New features</h2>
 <ul>
 <li>Added a context menu on the zone layout canvas that has various options for aligning selected zones:<ul>
@@ -34,6 +69,8 @@ CHANGELOG = """
 <li><p>You can now add multiple connections between same two zones.</p>
 </li>
 <li><p>Connection type between zones can now be changed in the inspector widget.</p>
+</li>
+<li><p>Added changelog to the &quot;about&quot; window.</p>
 </li>
 </ul>
 <h2 id="bugfixes">Bugfixes</h2>

@@ -1,5 +1,40 @@
 # Changelog
 
+# v0.1.0 - Significant Changes
+
+
+## New Features
+
+* On first run, you'll be asked to enter the game install directory, and the editor will mine the game data as well as required thumbnail images to be used in the editor. You can chose not to, but you will lose the ability to use the catalog explorer, see icons for objects, spells and artifacts, and you will not have sid's fill dropdowns in editor fields.
+
+* All dropdowns now have names and thumbnails of list items for a better user experience.
+
+* Editor fields now correctly narrow down which sid types are allowed in which field instead of containing a list of everything in the game.
+
+* Properly implemented bonus selection in template settings.
+
+* Catalog explorer now shows detailed content about artifacts, spells, resources and map objects.
+
+## Improvements
+
+* Faction selection fields are now proper dropdowns instead of free fields.
+
+* Road and Biome selection are now type-aware and will correctly display relevant options in the dropdowns based on which type was selected.
+
+* Changed the layout split direction for catalog explorer so its easier to use (list on left, details on right instead of top/bottom split)
+
+* Improved UX for content items elements on mandatory content lists and content limits.
+
+* Improved UI load times.
+
+
+## Bugfixes
+
+* Removed empty type option from road types.
+
+* Value overrides tab on template editor is now scrollable and won't cause super long dialog windows that overflow the screen if there are too many overrides.
+---
+
 # v0.0.7
 
 ## New Features
