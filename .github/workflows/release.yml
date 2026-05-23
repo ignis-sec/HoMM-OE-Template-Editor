@@ -13,8 +13,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  resolve-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+      is_prerelease: ${{ steps.tag.outputs.is_prerelease }}
+    steps:
+      - id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "branch" ]; then
+            # Unique per-commit tag so each prerelease is a distinct release.
+            echo "release_tag=prerelease-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-windows:
+    needs: [resolve-tag]
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,11 +88,11 @@ jobs:
           Write-Host ("exe size: {0:N1} MB" -f $size)
           if ($size -lt 30) { throw "exe is only ${size}MB — PySide6 was not bundled" }
 
-      - name: Rename exe with tag (catalog + icons are built from the user's game
-              install on first launch, so the bare exe is the whole release)
+      - name: Rename exe with release tag (catalog + icons are built from the user's
+              game install on first launch, so the bare exe is the whole release)
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:RELEASE_TAG
           $src = "dist/HoMM OE Template Editor.exe"
           $dst = "dist/HoMM OE Template Editor-$tag-windows.exe"
           Move-Item $src $dst
@@ -80,7 +101,7 @@ jobs:
       - name: Log SHA-256 of the release exe
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:RELEASE_TAG
           $exe = "dist/HoMM OE Template Editor-$tag-windows.exe"
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
           Write-Host "SHA-256 ($((Split-Path $exe -Leaf))): $hash"
@@ -92,14 +113,16 @@ jobs:
           path: dist/HoMM OE Template Editor-*-windows.exe
 
   package-source:
+    needs: [resolve-tag]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Build source archive
         run: |
-          tag="${GITHUB_REF_NAME}"
-          git archive --format=zip --prefix="HoMM OE Template Editor-${tag}/" -o "HoMM OE Template Editor-${tag}-source.zip" HEAD
+          git archive --format=zip --prefix="HoMM OE Template Editor-${RELEASE_TAG}/" -o "HoMM OE Template Editor-${RELEASE_TAG}-source.zip" HEAD
 
       - name: Upload source archive
         uses: actions/upload-artifact@v4
@@ -108,9 +131,15 @@ jobs:
           path: HoMM OE Template Editor-*-source.zip
 
   release:
-    needs: [build-windows, package-source]
+    needs: [resolve-tag, build-windows, package-source]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+      IS_PRERELEASE: ${{ needs.resolve-tag.outputs.is_prerelease }}
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: homm-oe-template-editor-windows
@@ -121,16 +150,27 @@ jobs:
           name: homm-oe-template-editor-source
           path: dist
 
+      - name: Sweep stale prereleases (keep only the one we're about to publish)
+        if: env.IS_PRERELEASE == 'true'
+        shell: bash
+        run: |
+          # Remove any release/tag starting with "prerelease" except the current target.
+          # Catches the legacy bare "prerelease" tag too, plus any older prerelease-<sha>.
+          gh release list --limit 100 --json tagName \
+            | jq -r '.[] | .tagName' \
+            | grep -E '^prerelease(-|$)' \
+            | grep -vx "$RELEASE_TAG" \
+            | while read -r tag; do
+                echo "Deleting stale prerelease: $tag"
+                gh release delete "$tag" --yes --cleanup-tag || true
+              done
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          # Branch pushes use the fixed "prerelease" tag (replaces previous prerelease);
-          # tag pushes use the tag name itself (e.g. v0.0.7). The tag deliberately
-          # does NOT match the branch name "pre-release" — sharing a name between a
-          # branch and a tag breaks GitHub Desktop's ref resolution.
-          tag_name: ${{ github.ref_type == 'branch' && 'prerelease' || github.ref_name }}
-          name: ${{ github.ref_type == 'branch' && format('Prerelease ({0})', github.sha) || github.ref_name }}
-          prerelease: ${{ github.ref_type == 'branch' }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.IS_PRERELEASE == 'true' && format('Prerelease ({0})', env.RELEASE_TAG) || env.RELEASE_TAG }}
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           target_commitish: ${{ github.sha }}
           files: |
             dist/HoMM OE Template Editor-*-windows.exe
