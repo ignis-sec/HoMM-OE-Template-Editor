@@ -19,7 +19,9 @@ def main() -> int:
     configure_logging()
 
     app = QApplication(sys.argv)
-    app.setApplicationName("HoMM:OE Template Editor")
+    # No colon — Windows rejects ':' in path segments, and QStandardPaths /
+    # QSettings derive the AppLocalDataLocation and config file names from this.
+    app.setApplicationName("HoMM OE Template Editor")
     app.setApplicationVersion(__version__)
     app.setOrganizationName("templategen")
 
