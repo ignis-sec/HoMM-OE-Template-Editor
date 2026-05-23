@@ -24,6 +24,8 @@ from templategen.ui.widgets.listable import ListableItem, to_listable
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from PySide6.QtGui import QIcon
+
     from templategen.services.session import EditorSession
 
 
@@ -180,6 +182,7 @@ class SubObjectListEditor(QWidget):
         factories: list[tuple[str, Callable[[], Any]]],
         summary: Callable[[Any], str],
         on_drill_in: Callable[[Any], None],
+        icon_for: Callable[[Any], QIcon | None] | None = None,
     ) -> None:
         super().__init__()
         self._target = target
@@ -188,6 +191,7 @@ class SubObjectListEditor(QWidget):
         self._factories = factories
         self._summary = summary
         self._on_drill_in = on_drill_in
+        self._icon_for = icon_for
 
         session.model_object_changed.connect(self._on_model_changed)
 
@@ -243,6 +247,11 @@ class SubObjectListEditor(QWidget):
 
         open_button = QPushButton(f"[{index}] {self._summary(sub_obj)}")
         open_button.setStyleSheet("text-align: left; padding-left: 6px;")
+        if self._icon_for is not None:
+            icon = self._icon_for(sub_obj)
+            if icon is not None:
+                open_button.setIcon(icon)
+                open_button.setIconSize(QSize(40, 40))
         open_button.clicked.connect(lambda _checked=False, obj=sub_obj: self._on_drill_in(obj))
         layout.addWidget(open_button, stretch=1)
 

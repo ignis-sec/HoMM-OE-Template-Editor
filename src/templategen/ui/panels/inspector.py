@@ -59,6 +59,7 @@ from templategen.services.commands import ChangeConnectionTypeCommand
 from templategen.ui.asset_icons import (
     content_sid_listables,
     fraction_listables,
+    sid_listable,
     sid_listables,
 )
 from templategen.ui.widgets.field_binding import (
@@ -78,6 +79,8 @@ from templategen.ui.widgets.sub_object_form import LazySubObjectGroup
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from PySide6.QtGui import QIcon
 
     from templategen.catalog.game_data import GameDataCatalog
     from templategen.services.workspace import Workspace
@@ -797,12 +800,16 @@ class Inspector(QWidget):
         def summary(item: object) -> str:
             assert isinstance(item, ContentItem)
             if item.sid:
-                tail = f" (sid={item.sid})"
-            elif item.includeLists:
-                tail = f" (lists={','.join(item.includeLists)})"
-            else:
-                tail = ""
-            return f"ContentItem{tail}"
+                listable = sid_listable(self._catalog, item.sid)
+                return listable.display
+            if item.includeLists:
+                return f"via includeLists: {', '.join(item.includeLists)}"
+            return "(unset)"
+
+        def icon_for(item: object) -> QIcon | None:
+            if isinstance(item, ContentItem) and item.sid:
+                return sid_listable(self._catalog, item.sid).icon
+            return None
 
         return SubObjectListEditor(
             target,
@@ -811,6 +818,7 @@ class Inspector(QWidget):
             factories=factories,
             summary=summary,
             on_drill_in=self.drill_in,
+            icon_for=icon_for,
         )
 
     def _limit_item_list(self, target: object, field: str) -> SubObjectListEditor:
@@ -820,8 +828,18 @@ class Inspector(QWidget):
 
         def summary(item: object) -> str:
             assert isinstance(item, LimitItem)
-            head = item.sid or ("via includeLists" if item.includeLists else "(no sid)")
-            return f"{head} (max={item.maxCount})"
+            if item.sid:
+                head = sid_listable(self._catalog, item.sid).display
+            elif item.includeLists:
+                head = f"via includeLists: {', '.join(item.includeLists)}"
+            else:
+                head = "(no sid)"
+            return f"{head}  · max={item.maxCount}"
+
+        def icon_for(item: object) -> QIcon | None:
+            if isinstance(item, LimitItem) and item.sid:
+                return sid_listable(self._catalog, item.sid).icon
+            return None
 
         return SubObjectListEditor(
             target,
@@ -830,6 +848,7 @@ class Inspector(QWidget):
             factories=factories,
             summary=summary,
             on_drill_in=self.drill_in,
+            icon_for=icon_for,
         )
 
     def _placement_rule_list(self, target: object, field: str) -> SubObjectListEditor:
