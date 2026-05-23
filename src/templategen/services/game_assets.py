@@ -90,12 +90,13 @@ def extract_core_zip(game_install: Path, target_dir: Path) -> Path:
 _PREFERRED_TEXTURE_FORMAT: Final[int] = 12
 
 
-def extract_artifact_icons(
+def extract_named_textures(
     game_install: Path,
     icon_names: Iterable[str],
     target_dir: Path,
     *,
     progress: Callable[[int, int], None] | None = None,
+    kind: str = "icons",
 ) -> tuple[int, list[str]]:
     """Walk Texture2D objects in the game's _Data bundles, save matches as PNGs.
 
@@ -161,8 +162,9 @@ def extract_artifact_icons(
             progress(saved, total)
 
     _log.info(
-        "extracted %d artifact icons (%d disambiguated by preferring m_TextureFormat=%d)",
+        "extracted %d %s (%d disambiguated by preferring m_TextureFormat=%d)",
         saved,
+        kind,
         preferred_picks,
         _PREFERRED_TEXTURE_FORMAT,
     )

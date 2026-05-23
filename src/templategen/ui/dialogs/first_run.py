@@ -20,10 +20,11 @@ from templategen.infra.paths import (
     catalog_json_path,
     extracted_core_dir,
     item_icons_dir,
+    spell_icons_dir,
 )
 from templategen.services.game_assets import (
-    extract_artifact_icons,
     extract_core_zip,
+    extract_named_textures,
     find_game_install,
     is_game_install,
 )
@@ -152,6 +153,17 @@ def _build_with_progress(game_install: Path, parent: QWidget | None) -> None:
         )
 
 
+def _icon_names_from(payloads: dict) -> list[str]:
+    out: list[str] = []
+    for payload in payloads.values():
+        if not isinstance(payload, dict):
+            continue
+        icon = payload.get("icon")
+        if isinstance(icon, str):
+            out.append(icon)
+    return out
+
+
 class _BuildWorker(QThread):
     step = Signal(int, str)
 
@@ -171,24 +183,39 @@ class _BuildWorker(QThread):
             snapshot = build_snapshot(core_root)
             write_snapshot(snapshot, catalog_json_path())
 
-            self.step.emit(55, "Extracting artifact icons from game assets…")
-            wanted: list[str] = []
-            for payload in snapshot.get("artifacts", {}).values():
-                icon = payload.get("icon") if isinstance(payload, dict) else None
-                if isinstance(icon, str):
-                    wanted.append(icon)
+            artifact_icons = _icon_names_from(snapshot.get("artifacts", {}))
+            spell_icons = _icon_names_from(snapshot.get("spells", {}))
 
-            saved, missing = extract_artifact_icons(
+            self.step.emit(55, "Extracting artifact icons from game assets…")
+            saved_a, missing_a = extract_named_textures(
                 self._game_install,
-                wanted,
+                artifact_icons,
                 item_icons_dir(),
+                kind="artifact icons",
                 progress=lambda done, total: self.step.emit(
-                    55 + int(40 * done / max(total, 1)),
+                    55 + int(20 * done / max(total, 1)),
                     f"Extracting artifact icons ({done}/{total})…",
                 ),
             )
+
+            self.step.emit(75, "Extracting spell icons from game assets…")
+            saved_s, missing_s = extract_named_textures(
+                self._game_install,
+                spell_icons,
+                spell_icons_dir(),
+                kind="spell icons",
+                progress=lambda done, total: self.step.emit(
+                    75 + int(20 * done / max(total, 1)),
+                    f"Extracting spell icons ({done}/{total})…",
+                ),
+            )
+
             self.step.emit(98, "Finishing…")
-            _log.info("first-run build: %d artifacts, %d icons (%d missing)", len(wanted), saved, len(missing))
+            _log.info(
+                "first-run build: %d artifacts (%d icons, %d missing), %d spells (%d icons, %d missing)",
+                len(artifact_icons), saved_a, len(missing_a),
+                len(spell_icons), saved_s, len(missing_s),
+            )
             self.step.emit(100, "Done")
         except Exception as exc:
             self.error = f"{type(exc).__name__}: {exc}"

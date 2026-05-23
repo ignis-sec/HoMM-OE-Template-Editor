@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from templategen.model.enums import GameMode
 from templategen.model.game_rules import Bonus, GlobalBans, ValueOverride, WinConditions
 from templategen.services.commands import EditFieldCommand
-from templategen.ui.asset_icons import artifact_listables
+from templategen.ui.asset_icons import artifact_listables, spell_listables
 from templategen.ui.widgets.field_binding import bind_int, bind_string
 from templategen.ui.widgets.list_editors import (
     InlineSubObjectListEditor,
@@ -269,7 +269,7 @@ class _BansTab(QWidget):
             return
 
         bans = self._template.globalBans
-        spell_choices = lambda: list(self._catalog.known_spell_sids())  # noqa: E731
+        spell_choices = lambda: spell_listables(self._catalog)  # noqa: E731
         artifact_choices = lambda: artifact_listables(self._catalog)  # noqa: E731
         self._layout.addWidget(QLabel("Banned magics:"))
         self._layout.addWidget(ReferenceListEditor(bans, "magics", self._session, choices=spell_choices))

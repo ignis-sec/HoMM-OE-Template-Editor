@@ -30,9 +30,10 @@ class CatalogSnapshot(TypedDict):
     artifact_sids: list[str]
     spell_sids: list[str]
     artifacts: dict[str, dict[str, Any]]
+    spells: dict[str, dict[str, Any]]
 
 
-SCHEMA_VERSION: Final[int] = 4
+SCHEMA_VERSION: Final[int] = 5
 
 _BONUS_SIDS: Final[list[str]] = [
     "add_bonus_hero_item",
@@ -73,7 +74,7 @@ def build_snapshot(
     resource_by_mine = _collect_resource_by_mine(generator_root)
     water_for_biome = _collect_water_for_biome(generator_root)
     artifacts = _collect_artifacts(core_root)
-    spell_sids = _collect_spell_sids(core_root)
+    spells = _collect_spells(core_root)
 
     if item_icon_target_dir is not None:
         textures = texture_root or (core_root.parent / "Assets" / "Texture2D")
@@ -96,8 +97,9 @@ def build_snapshot(
         resource_by_mine=resource_by_mine,
         water_for_biome=water_for_biome,
         artifact_sids=sorted(artifacts.keys()),
-        spell_sids=spell_sids,
+        spell_sids=sorted(spells.keys()),
         artifacts=artifacts,
+        spells=spells,
     )
 
 
@@ -146,8 +148,60 @@ def _collect_array_ids(directory: Path) -> list[str]:
     return out
 
 
-def _collect_spell_sids(core_root: Path) -> list[str]:
-    return _collect_array_ids(core_root / "DB" / "magics")
+_SPELL_FIELDS_TO_KEEP: Final[tuple[str, ...]] = (
+    "icon",
+    "school_",
+    "rank",
+    "usedOnMap",
+    "isSpecialMagic",
+    "normalMagicSid",
+)
+
+
+def _collect_spells(core_root: Path) -> dict[str, dict[str, Any]]:
+    magics_dir = core_root / "DB" / "magics"
+    locale = _load_localization(core_root, "magic.json")
+    out: dict[str, dict[str, Any]] = {}
+    if not magics_dir.is_dir():
+        return out
+    for path in sorted(magics_dir.glob("*.json")):
+        if path.name.startswith("test_"):
+            continue
+        try:
+            data = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        entries = data.get("array") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            sid = entry.get("id")
+            if not isinstance(sid, str) or sid in out:
+                continue
+            payload: dict[str, Any] = {}
+            for field in _SPELL_FIELDS_TO_KEEP:
+                if field in entry:
+                    payload[field] = entry[field]
+            name_key = entry.get("name")
+            if isinstance(name_key, str):
+                payload["name_key"] = name_key
+                payload["name"] = locale.get(name_key, name_key)
+            desc = entry.get("description")
+            if isinstance(desc, list):
+                parts = [locale.get(d, "") for d in desc if isinstance(d, str)]
+                payload["description_keys"] = [d for d in desc if isinstance(d, str)]
+                payload["description"] = "\n\n".join(p for p in parts if p)
+            elif isinstance(desc, str):
+                payload["description_keys"] = [desc]
+                payload["description"] = locale.get(desc, "")
+            magic_type = entry.get("magicTypeDescription")
+            if isinstance(magic_type, str) and magic_type.strip():
+                payload["magic_type_key"] = magic_type
+                payload["magic_type"] = locale.get(magic_type, magic_type)
+            out[sid] = payload
+    return out
 
 
 def _load_localization(core_root: Path, file_name: str, language: str = "english") -> dict[str, str]:

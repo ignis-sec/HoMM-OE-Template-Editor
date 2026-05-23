@@ -24,3 +24,7 @@ def catalog_json_path() -> Path:
 
 def item_icons_dir() -> Path:
     return app_data_root() / "items"
+
+
+def spell_icons_dir() -> Path:
+    return app_data_root() / "magics"

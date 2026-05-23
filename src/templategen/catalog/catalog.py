@@ -43,6 +43,9 @@ class ReferenceCatalog:
     def get_artifact(self, sid: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def get_spell(self, sid: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     # ── detail lookups (for the explorer) ────────────────────────────────
     def get_content_list(self, name: str) -> dict[str, Any] | None:
         raise NotImplementedError

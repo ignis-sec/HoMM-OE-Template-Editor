@@ -18,7 +18,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from templategen.ui.asset_icons import artifact_icon_path, artifact_listable
+from templategen.ui.asset_icons import (
+    artifact_icon_path,
+    artifact_listable,
+    spell_icon_path,
+    spell_listable,
+)
 from templategen.ui.widgets.listable import ListableItem
 
 if TYPE_CHECKING:
@@ -27,7 +32,8 @@ if TYPE_CHECKING:
     from templategen.catalog.game_data import GameDataCatalog
 
 _SID_ROLE: Final[int] = Qt.ItemDataRole.UserRole + 1
-_ARTIFACT_ICON_SIZE: Final[int] = 40
+_ASSET_ICON_SIZE: Final[int] = 40
+_CATEGORIES_WITH_ICONS: Final[frozenset[str]] = frozenset({"artifacts", "spells"})
 
 _CATEGORY_LABELS: Final[dict[str, str]] = {
     "lists": "Content Lists",
@@ -106,8 +112,8 @@ class _CategoryTab(QWidget):
         outer.addWidget(splitter, stretch=1)
 
         self._list = QListWidget()
-        if category == "artifacts":
-            self._list.setIconSize(QSize(_ARTIFACT_ICON_SIZE, _ARTIFACT_ICON_SIZE))
+        if category in _CATEGORIES_WITH_ICONS:
+            self._list.setIconSize(QSize(_ASSET_ICON_SIZE, _ASSET_ICON_SIZE))
         self._list.currentItemChanged.connect(self._on_current_item_changed)
         splitter.addWidget(self._list)
 
@@ -171,6 +177,8 @@ class _CategoryTab(QWidget):
     def _listable_for(self, sid: str) -> ListableItem:
         if self._category == "artifacts":
             return artifact_listable(self._catalog, sid)
+        if self._category == "spells":
+            return spell_listable(self._catalog, sid)
         return ListableItem(value=sid)
 
     def _on_current_item_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
@@ -342,18 +350,61 @@ class _CategoryTab(QWidget):
         return "".join(parts)
 
     def _render_spell(self, sid: str) -> str:
-        parts = [
-            f"<h3>{escape(sid)}</h3>",
-            "<p><em>Spell SID</em></p>",
-        ]
+        data = self._catalog.get_spell(sid)
+        if data is None:
+            return _not_found(sid)
+        name = data.get("name") or sid
+        description = data.get("description") or ""
+        icon_html = ""
+        icon_path = spell_icon_path(self._catalog, sid)
+        if icon_path is not None:
+            icon_url = QUrl.fromLocalFile(str(icon_path)).toString()
+            icon_html = (
+                f"<img src='{escape(icon_url)}' width='96' height='96' "
+                "style='vertical-align: top; margin-right: 12px;'/>"
+            )
+
+        magic_type = data.get("magic_type") or ""
+        header_table = (
+            "<table cellpadding='0' cellspacing='0'><tr>"
+            f"<td>{icon_html}</td>"
+            f"<td><h3 style='margin-top:0;'>{escape(str(name))}</h3>"
+            + (f"<p><i>{escape(str(magic_type))}</i></p>" if magic_type else "")
+            + f"<p>{escape(str(description)).replace(chr(10), '<br>')}</p></td>"
+            "</tr></table>"
+        )
+
+        meta_rows = []
+        for key, label in (
+            ("school_", "School"),
+            ("rank", "Rank"),
+            ("usedOnMap", "Used on map"),
+            ("isSpecialMagic", "Special variant"),
+            ("normalMagicSid", "Base spell"),
+        ):
+            value = data.get(key)
+            if value is None or value == "":
+                continue
+            if key == "normalMagicSid" and isinstance(value, str):
+                href = f"spell:{value}"
+                cell = f"<a href='{escape(href)}'>{escape(value)}</a>"
+            else:
+                cell = escape(str(value))
+            meta_rows.append(f"<tr><td><b>{escape(label)}</b></td><td>{cell}</td></tr>")
+        meta_rows.append(f"<tr><td><b>SID</b></td><td><code>{escape(sid)}</code></td></tr>")
+        meta_html = f"<table cellspacing='4' cellpadding='2'>{''.join(meta_rows)}</table>"
+
+        parts = [header_table, meta_html]
         for ref_label, names, link_kind in (
             ("Lists containing it", self._catalog.lists_containing(sid), "list"),
             ("Pools that include it directly", self._catalog.pools_with_direct_sid(sid), "pool"),
             ("Pools that can produce it (transitive)", self._catalog.pools_producing(sid), "pool"),
             ("Pools banning it", self._catalog.pools_banning(sid), "pool"),
         ):
+            if not names:
+                continue
             parts.append(f"<h4>{escape(ref_label)} ({len(names)})</h4>")
-            parts.append("<p>" + (_link_list(link_kind, names) if names else "<em>none</em>") + "</p>")
+            parts.append("<p>" + _link_list(link_kind, names) + "</p>")
         return "".join(parts)
 
     def _render_meta(self, name: str) -> str:
