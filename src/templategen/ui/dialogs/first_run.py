@@ -19,6 +19,7 @@ from templategen.infra.paths import (
     app_data_root,
     catalog_json_path,
     extracted_core_dir,
+    fraction_icons_dir,
     interactable_icons_dir,
     item_icons_dir,
     resource_icons_dir,
@@ -239,7 +240,7 @@ class _BuildWorker(QThread):
                 ),
             )
 
-            self.step.emit(90, "Extracting resource icons from game assets…")
+            self.step.emit(88, "Extracting resource icons from game assets…")
             saved_r, missing_r = extract_named_textures(
                 self._game_install,
                 resource_icons,
@@ -247,23 +248,33 @@ class _BuildWorker(QThread):
                 kind="resource icons",
                 prefer_size=(64, 64),
                 progress=lambda done, total: self.step.emit(
-                    90 + int(8 * done / max(total, 1)),
+                    88 + int(5 * done / max(total, 1)),
                     f"Extracting resource icons ({done}/{total})…",
                 ),
             )
 
+            self.step.emit(94, "Extracting faction icons from game assets…")
+            fraction_names = [f"fraction_{f}" for f in snapshot.get("fractions", [])]
+            saved_f, missing_f = extract_named_textures(
+                self._game_install,
+                fraction_names,
+                fraction_icons_dir(),
+                kind="faction icons",
+            )
+
             self.step.emit(98, "Finishing…")
             _log.info(
-                "first-run build: %d/%d artifacts, %d/%d spells, %d/%d interactables, %d/%d resources",
+                "first-run build: %d/%d artifacts, %d/%d spells, %d/%d interactables, %d/%d resources, %d/%d fractions",
                 saved_a, len(artifact_icons),
                 saved_s, len(spell_icons),
                 saved_i, len(interactable_icons),
                 saved_r, len(resource_icons),
+                saved_f, len(fraction_names),
             )
-            if missing_a or missing_s or missing_i or missing_r:
+            if missing_a or missing_s or missing_i or missing_r or missing_f:
                 _log.info(
-                    "missing icon assets — artifacts: %s, spells: %s, interactables: %s, resources: %s",
-                    missing_a[:5], missing_s[:5], missing_i[:5], missing_r[:5],
+                    "missing icon assets — artifacts: %s, spells: %s, interactables: %s, resources: %s, fractions: %s",
+                    missing_a[:5], missing_s[:5], missing_i[:5], missing_r[:5], missing_f[:5],
                 )
             self.step.emit(100, "Done")
         except Exception as exc:

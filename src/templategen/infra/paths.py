@@ -36,3 +36,7 @@ def interactable_icons_dir() -> Path:
 
 def resource_icons_dir() -> Path:
     return app_data_root() / "resources"
+
+
+def fraction_icons_dir() -> Path:
+    return app_data_root() / "fractions"

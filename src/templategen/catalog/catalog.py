@@ -58,6 +58,9 @@ class ReferenceCatalog:
     def get_resource(self, sid: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def known_fractions(self) -> Sequence[str]:
+        raise NotImplementedError
+
     # ── detail lookups (for the explorer) ────────────────────────────────
     def get_content_list(self, name: str) -> dict[str, Any] | None:
         raise NotImplementedError

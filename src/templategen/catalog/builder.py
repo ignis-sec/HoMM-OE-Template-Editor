@@ -33,9 +33,10 @@ class CatalogSnapshot(TypedDict):
     spells: dict[str, dict[str, Any]]
     interactables: dict[str, dict[str, Any]]
     resources: dict[str, dict[str, Any]]
+    fractions: list[str]
 
 
-SCHEMA_VERSION: Final[int] = 7
+SCHEMA_VERSION: Final[int] = 8
 
 _BONUS_SIDS: Final[list[str]] = [
     "add_bonus_hero_item",
@@ -79,6 +80,7 @@ def build_snapshot(
     spells = _collect_spells(core_root)
     interactables = _collect_interactables(core_root)
     resources = _collect_resources(core_root)
+    fractions = _collect_fractions(core_root)
 
     if item_icon_target_dir is not None:
         textures = texture_root or (core_root.parent / "Assets" / "Texture2D")
@@ -106,6 +108,7 @@ def build_snapshot(
         spells=spells,
         interactables=interactables,
         resources=resources,
+        fractions=fractions,
     )
 
 
@@ -225,6 +228,20 @@ def _collect_interactables(core_root: Path) -> dict[str, dict[str, Any]]:
 
 def _collect_resources(core_root: Path) -> dict[str, dict[str, Any]]:
     return _collect_map_objects(core_root, "DB/map/objects/3_resources.json")
+
+
+def _collect_fractions(core_root: Path) -> list[str]:
+    path = core_root / "DB" / "data.json"
+    if not path.is_file():
+        return []
+    try:
+        data = _read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    fractions = data.get("fractions") or []
+    return [f for f in fractions if isinstance(f, str)]
 
 
 def _collect_map_objects(core_root: Path, relative: str) -> dict[str, dict[str, Any]]:

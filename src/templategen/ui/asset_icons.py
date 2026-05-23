@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtGui import QIcon
 
 from templategen.infra.paths import (
+    fraction_icons_dir,
     interactable_icons_dir,
     item_icons_dir,
     resource_icons_dir,
@@ -149,6 +150,27 @@ def resource_listable(catalog: ReferenceCatalog, sid: str) -> ListableItem:
 def resource_listables(catalog: ReferenceCatalog) -> list[ListableItem]:
     """Every known resource as a ListableItem, sorted by display name."""
     items = [resource_listable(catalog, sid) for sid in catalog.known_resource_sids()]
+    items.sort(key=lambda i: i.display.casefold())
+    return items
+
+
+def fraction_icon_path(fraction: str) -> Path | None:
+    path = fraction_icons_dir() / f"fraction_{fraction}.png"
+    return path if path.exists() else None
+
+
+def fraction_qicon(fraction: str) -> QIcon | None:
+    path = fraction_icon_path(fraction)
+    return QIcon(str(path)) if path is not None else None
+
+
+def fraction_listable(fraction: str) -> ListableItem:
+    label = fraction[:1].upper() + fraction[1:]
+    return ListableItem(value=fraction, label=label, icon=fraction_qicon(fraction))
+
+
+def fraction_listables(catalog: ReferenceCatalog) -> list[ListableItem]:
+    items = [fraction_listable(f) for f in catalog.known_fractions()]
     items.sort(key=lambda i: i.display.casefold())
     return items
 

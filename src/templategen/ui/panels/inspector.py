@@ -56,7 +56,11 @@ from templategen.model.main_objects import (
 from templategen.model.selectors import BiomeSelector, FactionSelector
 from templategen.model.zone import EncounterHolesSettings, Road, Zone
 from templategen.services.commands import ChangeConnectionTypeCommand
-from templategen.ui.asset_icons import content_sid_listables, sid_listables
+from templategen.ui.asset_icons import (
+    content_sid_listables,
+    fraction_listables,
+    sid_listables,
+)
 from templategen.ui.widgets.field_binding import (
     bind_bool,
     bind_choice,
@@ -433,7 +437,7 @@ class Inspector(QWidget):
             ),
         )
         misc.addRow("Owner:", self._combo(mo, "owner", _PLAYER_VALUES))
-        misc.addRow("Factions:", self._scalar_list(mo, "factions"))
+        misc.addRow("Factions:", self._fraction_list(mo, "factions"))
         misc.addRow("Is key object:", self._check(mo, "isKeyObject"))
         misc.addRow("Hold city win con:", self._check(mo, "holdCityWinCon"))
         misc.addRow("Enable weekly unit inc:", self._check(mo, "enableWeeklyUnitIncrement"))
@@ -509,7 +513,7 @@ class Inspector(QWidget):
     def _populate_road(self, road: Road) -> None:
         form = self._section()
         form.addRow("Kind:", _readonly("Road"))
-        road_types = ["", "Stone", "Dirt"]
+        road_types = [t.value for t in RoadType]
         form.addRow("Type:", self._combo(road, "type", road_types))
 
         self._add_sub_group(
@@ -552,15 +556,45 @@ class Inspector(QWidget):
     ) -> None:
         combo = QComboBox()
         refreshers.append(bind_choice(combo, selector, "type", self._session, _BIOME_TYPES))
+        # Args editor depends on the type; re-render via QTimer so we don't delete
+        # the combo from inside its own activated handler.
+        combo.activated.connect(lambda _idx: QTimer.singleShot(0, self._render_current))
         form.addRow("Type:", combo)
 
-        biomes = list(self._catalog.known_biomes())
-        if biomes:
-            args = ReferenceListEditor(selector, "args", self._session, choices=self._catalog.known_biomes)
+        args: QWidget
+        if selector.type == "FromList":
+            biomes = list(self._catalog.known_biomes())
+            if biomes:
+                args = ReferenceListEditor(
+                    selector, "args", self._session, choices=self._catalog.known_biomes,
+                )
+            else:
+                args = ScalarListEditor(selector, "args", self._session)
+        elif selector.type in {"MatchZone", "Match"}:
+            zone_names = self._known_zone_names()
+            args = ReferenceListEditor(
+                selector, "args", self._session, choices=lambda: zone_names,
+            )
+        elif selector.type == "MatchMainObject":
+            args = ScalarListEditor(selector, "args", self._session, item_type=int)
         else:
             args = ScalarListEditor(selector, "args", self._session)
         refreshers.append(args.refresh)
         form.addRow("Args:", args)
+
+    def _known_zone_names(self) -> list[str]:
+        template = self._session.template
+        if template is None:
+            return []
+        names: list[str] = []
+        seen: set[str] = set()
+        for variant in template.variants:
+            for zone in variant.zones:
+                if zone.name and zone.name not in seen:
+                    seen.add(zone.name)
+                    names.append(zone.name)
+        names.sort(key=str.casefold)
+        return names
 
     def _populate_faction_selector(
         self,
@@ -591,6 +625,7 @@ class Inspector(QWidget):
         combo.activated.connect(lambda _idx: QTimer.singleShot(0, self._render_current))
         form.addRow("Type:", combo)
 
+        args: QWidget
         if anchor.type == "Connection":
             zone, variant = self._zone_for_anchor(anchor)
             if zone is not None and variant is not None:
@@ -598,15 +633,28 @@ class Inspector(QWidget):
                     c.name for c in variant.connections
                     if c.name and (c.from_ == zone.name or c.to == zone.name)
                 ]
-                args: QWidget = ReferenceListEditor(
-                    anchor, "args", self._session, choices=lambda names=conn_names: names
+                args = ReferenceListEditor(
+                    anchor, "args", self._session, choices=lambda names=conn_names: names,
                 )
             else:
                 args = ScalarListEditor(anchor, "args", self._session)
+        elif anchor.type == "MainObject":
+            args = ScalarListEditor(anchor, "args", self._session, item_type=int)
+        elif anchor.type == "MandatoryContent":
+            bundle_names = self._known_bundle_names()
+            args = ReferenceListEditor(
+                anchor, "args", self._session, choices=lambda names=bundle_names: names,
+            )
         else:
             args = ScalarListEditor(anchor, "args", self._session)
         refreshers.append(args.refresh)
         form.addRow("Args:", args)
+
+    def _known_bundle_names(self) -> list[str]:
+        template = self._session.template
+        if template is None:
+            return []
+        return [b.name for b in template.mandatoryContent if isinstance(b.name, str)]
 
     def _zone_for_anchor(self, anchor: Anchor) -> tuple[Zone | None, object | None]:
         template = self._session.template
@@ -946,6 +994,11 @@ class Inspector(QWidget):
         )
         self._refreshers.append(widget.refresh)
         return widget
+
+    def _fraction_list(self, target: object, field: str) -> ReferenceListEditor:
+        return self._reference_list(
+            target, field, choices=lambda: fraction_listables(self._catalog),
+        )
 
     def _add_sub_group(
         self,
