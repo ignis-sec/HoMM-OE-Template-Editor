@@ -125,8 +125,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # Branch pushes use the fixed "prerelease" tag (replaces previous prerelease);
-          # tag pushes use the tag name itself (e.g. v0.0.7).
-          tag_name: ${{ github.ref_type == 'branch' && 'pre-release' || github.ref_name }}
+          # tag pushes use the tag name itself (e.g. v0.0.7). The tag deliberately
+          # does NOT match the branch name "pre-release" — sharing a name between a
+          # branch and a tag breaks GitHub Desktop's ref resolution.
+          tag_name: ${{ github.ref_type == 'branch' && 'prerelease' || github.ref_name }}
           name: ${{ github.ref_type == 'branch' && format('Prerelease ({0})', github.sha) || github.ref_name }}
           prerelease: ${{ github.ref_type == 'branch' }}
           target_commitish: ${{ github.sha }}
