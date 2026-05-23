@@ -67,38 +67,29 @@ jobs:
           Write-Host ("exe size: {0:N1} MB" -f $size)
           if ($size -lt 30) { throw "exe is only ${size}MB — PySide6 was not bundled" }
 
-      - name: Stage release folder (exe only — catalog + icons are built from the user's
-              game install on first launch)
+      - name: Rename exe with tag (catalog + icons are built from the user's game
+              install on first launch, so the bare exe is the whole release)
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $stage = "release-staging/HoMM OE Template Editor-$tag-windows"
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Move-Item "dist/HoMM OE Template Editor.exe" "$stage/HoMM OE Template Editor.exe"
-          Get-ChildItem $stage -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+          $src = "dist/HoMM OE Template Editor.exe"
+          $dst = "dist/HoMM OE Template Editor-$tag-windows.exe"
+          Move-Item $src $dst
+          Get-ChildItem dist | Select-Object Name, Length | Format-Table -AutoSize
 
-      - name: Zip release folder
+      - name: Log SHA-256 of the release exe
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $folder = "release-staging/HoMM OE Template Editor-$tag-windows"
-          $zip = "dist/HoMM OE Template Editor-$tag-windows.zip"
-          Compress-Archive -Path $folder -DestinationPath $zip
-          Write-Host "Zipped to $zip"
+          $exe = "dist/HoMM OE Template Editor-$tag-windows.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SHA-256 ($((Split-Path $exe -Leaf))): $hash"
 
-      - name: Log SHA-256 of the release zip
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          $zip = "dist/HoMM OE Template Editor-$tag-windows.zip"
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          Write-Host "SHA-256 ($((Split-Path $zip -Leaf))): $hash"
-
-      - name: Upload Windows release zip
+      - name: Upload Windows release exe
         uses: actions/upload-artifact@v4
         with:
           name: homm-oe-template-editor-windows
-          path: dist/HoMM OE Template Editor-*-windows.zip
+          path: dist/HoMM OE Template Editor-*-windows.exe
 
   package-source:
     runs-on: ubuntu-latest
@@ -140,7 +131,7 @@ jobs:
           prerelease: ${{ github.ref_type == 'branch' }}
           target_commitish: ${{ github.sha }}
           files: |
-            dist/HoMM OE Template Editor-*-windows.zip
+            dist/HoMM OE Template Editor-*-windows.exe
             dist/HoMM OE Template Editor-*-source.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
