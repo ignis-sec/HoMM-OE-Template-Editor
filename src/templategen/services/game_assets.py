@@ -127,6 +127,11 @@ def extract_named_textures(
 ) -> tuple[int, list[str]]:
     """Walk Texture2D objects in the game's _Data bundles, save matches as PNGs.
 
+    Name matching is **case-insensitive**: the catalog or config may spell an icon as
+    `mine_gold` while Unity stores it as `Mine_Gold`, etc. We compare both sides lowercased
+    and always save the output PNG with a lowercase filename so callers can do a simple
+    `f"{icon.lower()}.png"` lookup.
+
     Picker rules when a name has multiple candidates:
       - if `prefer_size` is set, pick a candidate whose decoded image matches that size
         (used for the 64x64 interactable map icons, which share names with larger
@@ -144,35 +149,39 @@ def extract_named_textures(
         raise FileNotFoundError(f"game data folder missing: {data_dir}")
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    wanted = {name for name in icon_names if isinstance(name, str) and name}
-    if not wanted:
+    wanted_originals = [n for n in icon_names if isinstance(n, str) and n]
+    if not wanted_originals:
         return 0, []
+    # Map lowercase → original spelling so we can keep the saved filename canonical.
+    wanted_lower: dict[str, str] = {}
+    for orig in wanted_originals:
+        wanted_lower.setdefault(orig.lower(), orig)
 
-    # For each icon name, keep every (texture_format, parsed_data) candidate we find.
-    # We defer .image decoding to after picking so we only decompress the texture we
-    # actually save.
-    candidates: dict[str, list[tuple[int, object]]] = {name: [] for name in wanted}
+    # Bucket candidates per lowercased name; defer .image decoding to after picking so
+    # we only decompress the texture we actually save.
+    candidates: dict[str, list[tuple[int, object]]] = {key: [] for key in wanted_lower}
     env = UnityPy.load(str(data_dir))
     for obj in env.objects:
         if obj.type.name != "Texture2D":
             continue
         data = obj.read()
         name = getattr(data, "m_Name", None) or getattr(data, "name", None) or ""
-        if name not in candidates:
+        key = name.lower()
+        if key not in candidates:
             continue
         fmt = getattr(data, "m_TextureFormat", -1)
         try:
             fmt_int = int(fmt)
         except (TypeError, ValueError):
             fmt_int = -1
-        candidates[name].append((fmt_int, data))
+        candidates[key].append((fmt_int, data))
 
     saved = 0
     preferred_picks = 0
-    found: set[str] = set()
-    total = len(wanted)
-    for name in sorted(wanted):
-        options = candidates.get(name, [])
+    found_keys: set[str] = set()
+    total = len(wanted_lower)
+    for key in sorted(wanted_lower):
+        options = candidates.get(key, [])
         if not options:
             continue
         chosen, picked_preferred = _pick_texture(options, prefer_size)
@@ -181,10 +190,11 @@ def extract_named_textures(
         try:
             image = chosen.image
         except Exception as exc:  # pragma: no cover - defensive
-            _log.warning("could not decode texture %s: %s", name, exc)
+            _log.warning("could not decode texture %s: %s", key, exc)
             continue
-        image.save(target_dir / f"{name}.png")
-        found.add(name)
+        # Always save with lowercase filename — consumers do `icon.lower()` to find it.
+        image.save(target_dir / f"{key}.png")
+        found_keys.add(key)
         saved += 1
         if progress is not None:
             progress(saved, total)
@@ -197,7 +207,10 @@ def extract_named_textures(
         preferred_picks,
         rule,
     )
-    return saved, sorted(set(icon_names) - found)
+    # Report missing using each caller's original spelling so error messages keep context.
+    missing = [orig for key, orig in wanted_lower.items() if key not in found_keys]
+    missing.sort()
+    return saved, missing
 
 
 def _pick_texture(

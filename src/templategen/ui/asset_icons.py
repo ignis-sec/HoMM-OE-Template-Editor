@@ -28,7 +28,7 @@ def artifact_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
     icon = artifact.get("icon")
     if not isinstance(icon, str):
         return None
-    path = item_icons_dir() / f"{icon}.png"
+    path = item_icons_dir() / f"{icon.lower()}.png"
     return path if path.exists() else None
 
 
@@ -62,7 +62,7 @@ def spell_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
     icon = spell.get("icon")
     if not isinstance(icon, str):
         return None
-    path = spell_icons_dir() / f"{icon}.png"
+    path = spell_icons_dir() / f"{icon.lower()}.png"
     return path if path.exists() else None
 
 
@@ -95,7 +95,7 @@ def interactable_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
     icon = entry.get("icon")
     if not isinstance(icon, str):
         return None
-    path = interactable_icons_dir() / f"{icon}.png"
+    path = interactable_icons_dir() / f"{icon.lower()}.png"
     return path if path.exists() else None
 
 
@@ -128,7 +128,7 @@ def resource_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
     icon = entry.get("icon")
     if not isinstance(icon, str):
         return None
-    path = resource_icons_dir() / f"{icon}.png"
+    path = resource_icons_dir() / f"{icon.lower()}.png"
     return path if path.exists() else None
 
 
@@ -155,7 +155,7 @@ def resource_listables(catalog: ReferenceCatalog) -> list[ListableItem]:
 
 
 def fraction_icon_path(fraction: str) -> Path | None:
-    path = fraction_icons_dir() / f"fraction_{fraction}.png"
+    path = fraction_icons_dir() / f"fraction_{fraction.lower()}.png"
     return path if path.exists() else None
 
 
