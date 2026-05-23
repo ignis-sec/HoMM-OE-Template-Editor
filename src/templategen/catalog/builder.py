@@ -32,9 +32,10 @@ class CatalogSnapshot(TypedDict):
     artifacts: dict[str, dict[str, Any]]
     spells: dict[str, dict[str, Any]]
     interactables: dict[str, dict[str, Any]]
+    resources: dict[str, dict[str, Any]]
 
 
-SCHEMA_VERSION: Final[int] = 6
+SCHEMA_VERSION: Final[int] = 7
 
 _BONUS_SIDS: Final[list[str]] = [
     "add_bonus_hero_item",
@@ -77,6 +78,7 @@ def build_snapshot(
     artifacts = _collect_artifacts(core_root)
     spells = _collect_spells(core_root)
     interactables = _collect_interactables(core_root)
+    resources = _collect_resources(core_root)
 
     if item_icon_target_dir is not None:
         textures = texture_root or (core_root.parent / "Assets" / "Texture2D")
@@ -103,6 +105,7 @@ def build_snapshot(
         artifacts=artifacts,
         spells=spells,
         interactables=interactables,
+        resources=resources,
     )
 
 
@@ -207,7 +210,7 @@ def _collect_spells(core_root: Path) -> dict[str, dict[str, Any]]:
     return out
 
 
-_INTERACTABLE_FIELDS_TO_KEEP: Final[tuple[str, ...]] = (
+_MAP_OBJECT_FIELDS_TO_KEEP: Final[tuple[str, ...]] = (
     "tag",
     "isInteractable",
     "sizeX",
@@ -217,7 +220,21 @@ _INTERACTABLE_FIELDS_TO_KEEP: Final[tuple[str, ...]] = (
 
 
 def _collect_interactables(core_root: Path) -> dict[str, dict[str, Any]]:
-    path = core_root / "DB" / "map" / "objects" / "4_interactables.json"
+    return _collect_map_objects(core_root, "DB/map/objects/4_interactables.json")
+
+
+def _collect_resources(core_root: Path) -> dict[str, dict[str, Any]]:
+    return _collect_map_objects(core_root, "DB/map/objects/3_resources.json")
+
+
+def _collect_map_objects(core_root: Path, relative: str) -> dict[str, dict[str, Any]]:
+    """Shared loader for the DB/map/objects/*.json files.
+
+    All entries share the same shape: `id`, `prefs` (list of prefab paths), some
+    geometry/tag flags, plus matching `<id>_name/description/narrativeDescription`
+    keys in Lang/<locale>/texts/mapObjects.json.
+    """
+    path = core_root / relative
     if not path.is_file():
         return {}
     try:
@@ -236,7 +253,7 @@ def _collect_interactables(core_root: Path) -> dict[str, dict[str, Any]]:
         if not isinstance(sid, str) or sid in out:
             continue
         payload: dict[str, Any] = {}
-        for field in _INTERACTABLE_FIELDS_TO_KEEP:
+        for field in _MAP_OBJECT_FIELDS_TO_KEEP:
             if field in entry:
                 payload[field] = entry[field]
         prefs = entry.get("prefs")

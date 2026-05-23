@@ -21,6 +21,7 @@ from templategen.infra.paths import (
     extracted_core_dir,
     interactable_icons_dir,
     item_icons_dir,
+    resource_icons_dir,
     spell_icons_dir,
 )
 from templategen.services.game_assets import (
@@ -28,6 +29,8 @@ from templategen.services.game_assets import (
     extract_named_textures,
     find_game_install,
     is_game_install,
+    remember_game_install,
+    saved_game_install,
 )
 
 _log = logging.getLogger(__name__)
@@ -45,16 +48,22 @@ def run_first_time_setup_if_needed(parent: QWidget | None = None) -> None:
 
 
 def rebuild_catalog_interactive(parent: QWidget | None = None) -> bool:
-    """Force-rebuild the catalog. Returns True if a build actually ran."""
+    """Force-rebuild the catalog. Skips the chooser when a previously-confirmed install
+    path is still valid. Returns True if a build actually ran."""
+    remembered = saved_game_install()
+    if remembered is not None:
+        return _build_with_progress(remembered, parent)
     return _interactive_build(parent)
 
 
 def _interactive_build(parent: QWidget | None) -> bool:
-    detected = find_game_install()
+    detected = saved_game_install() or find_game_install()
     if detected is not None:
         if not _prompt_use_found(detected, parent):
             return False
-        _build_with_progress(detected, parent)
+        if not _build_with_progress(detected, parent):
+            return False
+        remember_game_install(detected)
         return True
 
     if not _prompt_locate(parent):
@@ -62,7 +71,9 @@ def _interactive_build(parent: QWidget | None) -> bool:
     chosen = _ask_for_install_dir(parent)
     if chosen is None:
         return False
-    _build_with_progress(chosen, parent)
+    if not _build_with_progress(chosen, parent):
+        return False
+    remember_game_install(chosen)
     return True
 
 
@@ -116,7 +127,7 @@ def _ask_for_install_dir(parent: QWidget | None) -> Path | None:
             return None
 
 
-def _build_with_progress(game_install: Path, parent: QWidget | None) -> None:
+def _build_with_progress(game_install: Path, parent: QWidget | None) -> bool:
     progress = QProgressDialog("Preparing…", "Cancel", 0, 100, parent)
     progress.setWindowTitle("Building catalog")
     progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -152,6 +163,8 @@ def _build_with_progress(game_install: Path, parent: QWidget | None) -> None:
             "Catalog build failed",
             f"Building the catalog failed:\n\n{worker.error}",
         )
+        return False
+    return True
 
 
 def _icon_names_from(payloads: dict) -> list[str]:
@@ -187,6 +200,7 @@ class _BuildWorker(QThread):
             artifact_icons = _icon_names_from(snapshot.get("artifacts", {}))
             spell_icons = _icon_names_from(snapshot.get("spells", {}))
             interactable_icons = _icon_names_from(snapshot.get("interactables", {}))
+            resource_icons = _icon_names_from(snapshot.get("resources", {}))
 
             self.step.emit(50, "Extracting artifact icons from game assets…")
             saved_a, missing_a = extract_named_textures(
@@ -220,22 +234,36 @@ class _BuildWorker(QThread):
                 kind="interactable icons",
                 prefer_size=(64, 64),
                 progress=lambda done, total: self.step.emit(
-                    80 + int(15 * done / max(total, 1)),
+                    80 + int(10 * done / max(total, 1)),
                     f"Extracting map-object icons ({done}/{total})…",
+                ),
+            )
+
+            self.step.emit(90, "Extracting resource icons from game assets…")
+            saved_r, missing_r = extract_named_textures(
+                self._game_install,
+                resource_icons,
+                resource_icons_dir(),
+                kind="resource icons",
+                prefer_size=(64, 64),
+                progress=lambda done, total: self.step.emit(
+                    90 + int(8 * done / max(total, 1)),
+                    f"Extracting resource icons ({done}/{total})…",
                 ),
             )
 
             self.step.emit(98, "Finishing…")
             _log.info(
-                "first-run build: %d artifacts (%d/%d), %d spells (%d/%d), %d interactables (%d/%d)",
-                len(artifact_icons), saved_a, len(artifact_icons),
-                len(spell_icons), saved_s, len(spell_icons),
-                len(interactable_icons), saved_i, len(interactable_icons),
+                "first-run build: %d/%d artifacts, %d/%d spells, %d/%d interactables, %d/%d resources",
+                saved_a, len(artifact_icons),
+                saved_s, len(spell_icons),
+                saved_i, len(interactable_icons),
+                saved_r, len(resource_icons),
             )
-            if missing_a or missing_s or missing_i:
+            if missing_a or missing_s or missing_i or missing_r:
                 _log.info(
-                    "missing icon assets — artifacts: %s, spells: %s, interactables: %s",
-                    missing_a[:5], missing_s[:5], missing_i[:5],
+                    "missing icon assets — artifacts: %s, spells: %s, interactables: %s, resources: %s",
+                    missing_a[:5], missing_s[:5], missing_i[:5], missing_r[:5],
                 )
             self.step.emit(100, "Done")
         except Exception as exc:

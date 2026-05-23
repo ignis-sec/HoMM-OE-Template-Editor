@@ -56,7 +56,7 @@ from templategen.model.main_objects import (
 from templategen.model.selectors import BiomeSelector, FactionSelector
 from templategen.model.zone import EncounterHolesSettings, Road, Zone
 from templategen.services.commands import ChangeConnectionTypeCommand
-from templategen.ui.asset_icons import sid_listables
+from templategen.ui.asset_icons import content_sid_listables, sid_listables
 from templategen.ui.widgets.field_binding import (
     bind_bool,
     bind_choice,
@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from templategen.catalog.game_data import GameDataCatalog
     from templategen.services.workspace import Workspace
     from templategen.ui.widgets.field_binding import Refresh
+    from templategen.ui.widgets.listable import ListableItem
 
 
 _PLAYER_VALUES = [p.value for p in PlayerId]
@@ -85,6 +86,9 @@ _PLACEMENT_VALUES = [p.value for p in Placement]
 _BIOME_TYPES = ["FromList", "Match", "MatchMainObject", "MatchZone"]
 _FACTION_TYPES = ["FromList", "Match"]
 _ANCHOR_TYPES = ["MainObject", "Connection", "Crossroads", "Road", "Sid", "MandatoryContent"]
+
+_INPUT_MIN_WIDTH = 80
+_NUMERIC_MIN_WIDTH = 64
 
 _CONNECTION_CLASS_BY_TYPE: dict[ConnectionType, type[_ConnectionBase]] = {
     ConnectionType.DIRECT: DirectConnection,
@@ -116,7 +120,7 @@ class Inspector(QWidget):
         self._view_stack: list[object] = []
         self._refreshers: list[Refresh] = []
 
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(240)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
@@ -446,7 +450,10 @@ class Inspector(QWidget):
     def _populate_content_item(self, item: ContentItem) -> None:
         form = self._section()
         form.addRow("Kind:", _readonly("Content Item"))
-        form.addRow("Sid:", self._sid_picker(item, "sid"))
+        form.addRow(
+            "Sid:",
+            self._sid_picker(item, "sid", choices=lambda: content_sid_listables(self._catalog)),
+        )
         form.addRow("Variant:", self._int(item, "variant", -1, 100_000, 1))
         form.addRow("Name:", self._line(item, "name", optional=True))
 
@@ -473,7 +480,10 @@ class Inspector(QWidget):
     def _populate_limit_item(self, item: LimitItem) -> None:
         form = self._section()
         form.addRow("Kind:", _readonly("Limit Item"))
-        form.addRow("Sid:", self._sid_picker(item, "sid"))
+        form.addRow(
+            "Sid:",
+            self._sid_picker(item, "sid", choices=lambda: content_sid_listables(self._catalog)),
+        )
         form.addRow("Variant:", self._int(item, "variant", -1, 100_000, 1))
         form.addRow("Max count:", self._int(item, "maxCount", 0, 1_000_000, 1))
 
@@ -814,6 +824,7 @@ class Inspector(QWidget):
 
     def _line(self, target: object, field: str, *, optional: bool = False) -> QLineEdit:
         widget = QLineEdit()
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
         self._refreshers.append(bind_string(widget, target, field, self._session, optional=optional))
         return widget
 
@@ -821,6 +832,7 @@ class Inspector(QWidget):
         widget = QSpinBox()
         widget.setRange(minimum, maximum)
         widget.setSingleStep(step)
+        widget.setMinimumWidth(_NUMERIC_MIN_WIDTH)
         self._refreshers.append(bind_int(widget, target, field, self._session))
         return widget
 
@@ -838,6 +850,7 @@ class Inspector(QWidget):
         widget.setRange(minimum, maximum)
         widget.setSingleStep(step)
         widget.setDecimals(decimals)
+        widget.setMinimumWidth(_NUMERIC_MIN_WIDTH)
         self._refreshers.append(bind_float(widget, target, field, self._session))
         return widget
 
@@ -848,16 +861,21 @@ class Inspector(QWidget):
 
     def _combo(self, target: object, field: str, choices: list[str]) -> QComboBox:
         widget = QComboBox()
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
         self._refreshers.append(bind_choice(widget, target, field, self._session, choices))
         return widget
 
-    def _sid_picker(self, target: object, field: str) -> SidPicker:
-        widget = SidPicker(
-            target,
-            field,
-            self._session,
-            choices=lambda: sid_listables(self._catalog, list(self._catalog.known_sids())),
-        )
+    def _sid_picker(
+        self,
+        target: object,
+        field: str,
+        *,
+        choices: Callable[[], list[ListableItem]] | None = None,
+    ) -> SidPicker:
+        if choices is None:
+            choices = lambda: sid_listables(self._catalog, list(self._catalog.known_sids()))  # noqa: E731
+        widget = SidPicker(target, field, self._session, choices=choices)
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
         self._refreshers.append(widget.refresh)
         return widget
 

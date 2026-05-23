@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from templategen.model.enums import GameMode
 from templategen.model.game_rules import Bonus, GlobalBans, ValueOverride, WinConditions
 from templategen.services.commands import EditFieldCommand
-from templategen.ui.asset_icons import artifact_listables, spell_listables
+from templategen.ui.asset_icons import artifact_listables, sid_listables, spell_listables
 from templategen.ui.widgets.field_binding import bind_int, bind_string
 from templategen.ui.widgets.list_editors import (
     InlineSubObjectListEditor,
@@ -315,7 +315,10 @@ def _populate_value_override_row(
     session: Workspace,
     catalog: GameDataCatalog,
 ) -> None:
-    sid = SidPicker(override, "sid", session, choices=catalog.known_sids)
+    sid = SidPicker(
+        override, "sid", session,
+        choices=lambda: sid_listables(catalog, list(catalog.known_sids())),
+    )
     refreshers.append(sid.refresh)
     form.addRow("Sid:", sid)
 

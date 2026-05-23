@@ -392,6 +392,11 @@ class ReferenceListEditor(_ListEditorBase):
                 widget.addItem(item.icon, item.display, item.value)
             else:
                 widget.addItem(item.display, item.value)
+        # Make typing search by both the visible label (name) and any embedded SID.
+        completer = widget.completer()
+        if completer is not None:
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
 
         target_value = "" if value is None else str(value)
         if target_value:

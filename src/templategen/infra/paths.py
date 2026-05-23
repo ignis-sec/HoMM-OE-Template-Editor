@@ -32,3 +32,7 @@ def spell_icons_dir() -> Path:
 
 def interactable_icons_dir() -> Path:
     return app_data_root() / "interactables"
+
+
+def resource_icons_dir() -> Path:
+    return app_data_root() / "resources"

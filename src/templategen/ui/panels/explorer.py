@@ -23,6 +23,8 @@ from templategen.ui.asset_icons import (
     artifact_listable,
     interactable_icon_path,
     interactable_listable,
+    resource_icon_path,
+    resource_listable,
     sid_listable,
     spell_icon_path,
     spell_listable,
@@ -37,7 +39,7 @@ if TYPE_CHECKING:
 _SID_ROLE: Final[int] = Qt.ItemDataRole.UserRole + 1
 _ASSET_ICON_SIZE: Final[int] = 40
 _CATEGORIES_WITH_ICONS: Final[frozenset[str]] = frozenset(
-    {"artifacts", "spells", "interactables", "sids"}
+    {"artifacts", "spells", "interactables", "resources", "sids"}
 )
 
 _CATEGORY_LABELS: Final[dict[str, str]] = {
@@ -48,9 +50,10 @@ _CATEGORY_LABELS: Final[dict[str, str]] = {
     "artifacts": "Artifacts",
     "spells": "Spells",
     "interactables": "Map Objects",
+    "resources": "Resources",
 }
 _CATEGORY_ORDER: Final[list[str]] = [
-    "lists", "pools", "sids", "meta", "artifacts", "spells", "interactables",
+    "lists", "pools", "sids", "meta", "artifacts", "spells", "interactables", "resources",
 ]
 
 
@@ -169,6 +172,8 @@ class _CategoryTab(QWidget):
             return sorted(self._catalog.known_spell_sids())
         if self._category == "interactables":
             return sorted(self._catalog.known_interactable_sids())
+        if self._category == "resources":
+            return sorted(self._catalog.known_resource_sids())
         return []
 
     def _apply_filter(self, text: str) -> None:
@@ -191,6 +196,8 @@ class _CategoryTab(QWidget):
             return spell_listable(self._catalog, sid)
         if self._category == "interactables":
             return interactable_listable(self._catalog, sid)
+        if self._category == "resources":
+            return resource_listable(self._catalog, sid)
         if self._category == "sids":
             # Surface icons/names for any SID that turns out to be a known asset.
             return sid_listable(self._catalog, sid)
@@ -218,6 +225,8 @@ class _CategoryTab(QWidget):
             html = self._render_spell(sid)
         elif self._category == "interactables":
             html = self._render_interactable(sid)
+        elif self._category == "resources":
+            html = self._render_resource(sid)
         else:
             html = ""
         self._detail.setHtml(html)
@@ -235,6 +244,7 @@ class _CategoryTab(QWidget):
             "artifact": "artifacts",
             "spell": "spells",
             "interactable": "interactables",
+            "resource": "resources",
         }.get(kind)
         if category is not None:
             self._navigate(category, name)
@@ -426,14 +436,19 @@ class _CategoryTab(QWidget):
         return "".join(parts)
 
     def _render_interactable(self, sid: str) -> str:
-        data = self._catalog.get_interactable(sid)
+        return self._render_map_object(sid, self._catalog.get_interactable(sid), interactable_icon_path)
+
+    def _render_resource(self, sid: str) -> str:
+        return self._render_map_object(sid, self._catalog.get_resource(sid), resource_icon_path)
+
+    def _render_map_object(self, sid: str, data: dict | None, icon_resolver) -> str:
         if data is None:
             return _not_found(sid)
         name = data.get("name") or sid
         description = data.get("description") or ""
         narrative = data.get("narrative") or ""
         icon_html = ""
-        icon_path = interactable_icon_path(self._catalog, sid)
+        icon_path = icon_resolver(self._catalog, sid)
         if icon_path is not None:
             icon_url = QUrl.fromLocalFile(str(icon_path)).toString()
             icon_html = (

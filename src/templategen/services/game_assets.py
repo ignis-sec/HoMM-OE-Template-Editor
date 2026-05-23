@@ -14,6 +14,32 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
+_SETTING_GAME_INSTALL: Final[str] = "gameInstallPath"
+
+
+def saved_game_install() -> Path | None:
+    """Return the previously-confirmed game install path, if any and still valid."""
+    from PySide6.QtCore import QSettings
+
+    value = QSettings().value(_SETTING_GAME_INSTALL)
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    return path if is_game_install(path) else None
+
+
+def remember_game_install(path: Path) -> None:
+    """Persist the confirmed game install path in QSettings."""
+    from PySide6.QtCore import QSettings
+
+    QSettings().setValue(_SETTING_GAME_INSTALL, str(path))
+
+
+def forget_game_install() -> None:
+    from PySide6.QtCore import QSettings
+
+    QSettings().remove(_SETTING_GAME_INSTALL)
+
 # Default Steam install locations per platform. The Windows folder name uses '&' and the
 # Linux folder name uses 'and'; both forms appear in the wild so we probe several.
 _DEFAULT_PATHS_WINDOWS: tuple[str, ...] = (

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QComboBox, QCompleter
+from PySide6.QtWidgets import QComboBox
 
 from templategen.services.commands import EditFieldCommand
 from templategen.ui.widgets.listable import ListableItem, to_listable
@@ -38,10 +38,12 @@ class SidPicker(QComboBox):
 
         self.setEditable(True)
         self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        completer = QCompleter()
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self.setCompleter(completer)
+        # Use the combo's auto-wired completer (model = combo's item model) and switch it
+        # from prefix-match to contains-match so typing part of a name OR sid matches.
+        existing = self.completer()
+        if existing is not None:
+            existing.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            existing.setFilterMode(Qt.MatchFlag.MatchContains)
 
         self.refresh()
 
