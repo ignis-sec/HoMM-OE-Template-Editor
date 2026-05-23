@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
-    branches: [prerelease]
+    branches: [pre-release]
 
 permissions:
   contents: write
@@ -135,7 +135,7 @@ jobs:
         with:
           # Branch pushes use the fixed "prerelease" tag (replaces previous prerelease);
           # tag pushes use the tag name itself (e.g. v0.0.7).
-          tag_name: ${{ github.ref_type == 'branch' && 'prerelease' || github.ref_name }}
+          tag_name: ${{ github.ref_type == 'branch' && 'pre-release' || github.ref_name }}
           name: ${{ github.ref_type == 'branch' && format('Prerelease ({0})', github.sha) || github.ref_name }}
           prerelease: ${{ github.ref_type == 'branch' }}
           target_commitish: ${{ github.sha }}
