@@ -6,13 +6,15 @@ import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDockWidget,
     QFileDialog,
+    QFormLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -28,6 +30,7 @@ from templategen.model.enums import OrientationMode
 from templategen.model.variant import Orientation, Variant
 from templategen.services.commands import AddVariantCommand, RemoveVariantCommand
 from templategen.services.validator import Validator
+from templategen.ui.asset_icons import sid_listables
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
 from templategen.ui.dialogs.first_run import rebuild_catalog_interactive
@@ -86,6 +89,32 @@ class MainWindow(QMainWindow):
         self._update_canvas_actions_enabled(False)
         self._update_title()
         self._update_variant_label()
+
+        # qdarktheme's stylesheet makes the first combo-with-icons addRow cost
+        # ~500 ms (Qt polishes every icon). Pay that cost offscreen right after
+        # the main window paints, so the first Template Settings dialog opens
+        # without the freeze.
+        self._icon_polish_warmer: QWidget | None = None
+        QTimer.singleShot(0, self._prewarm_icon_polish)
+
+    def _prewarm_icon_polish(self) -> None:
+        if not self._catalog.is_loaded():
+            return
+        items = sid_listables(self._catalog, list(self._catalog.known_sids()))
+        if not any(i.icon is not None for i in items):
+            return
+        host = QWidget()
+        form = QFormLayout(host)
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setIconSize(QSize(24, 24))
+        for it in items:
+            if it.icon is not None:
+                combo.addItem(it.icon, it.display, it.value)
+            else:
+                combo.addItem(it.display, it.value)
+        form.addRow("warm", combo)
+        self._icon_polish_warmer = host
 
     def _build_actions(self) -> None:
         self.action_new = QAction(self._icons.get("new"), "&New Template", self)
