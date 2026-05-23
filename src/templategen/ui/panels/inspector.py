@@ -56,6 +56,7 @@ from templategen.model.main_objects import (
 from templategen.model.selectors import BiomeSelector, FactionSelector
 from templategen.model.zone import EncounterHolesSettings, Road, Zone
 from templategen.services.commands import ChangeConnectionTypeCommand
+from templategen.ui.asset_icons import sid_listables
 from templategen.ui.widgets.field_binding import (
     bind_bool,
     bind_choice,
@@ -851,7 +852,12 @@ class Inspector(QWidget):
         return widget
 
     def _sid_picker(self, target: object, field: str) -> SidPicker:
-        widget = SidPicker(target, field, self._session, choices=self._catalog.known_sids)
+        widget = SidPicker(
+            target,
+            field,
+            self._session,
+            choices=lambda: sid_listables(self._catalog, list(self._catalog.known_sids())),
+        )
         self._refreshers.append(widget.refresh)
         return widget
 

@@ -21,6 +21,9 @@ from PySide6.QtWidgets import (
 from templategen.ui.asset_icons import (
     artifact_icon_path,
     artifact_listable,
+    interactable_icon_path,
+    interactable_listable,
+    sid_listable,
     spell_icon_path,
     spell_listable,
 )
@@ -33,7 +36,9 @@ if TYPE_CHECKING:
 
 _SID_ROLE: Final[int] = Qt.ItemDataRole.UserRole + 1
 _ASSET_ICON_SIZE: Final[int] = 40
-_CATEGORIES_WITH_ICONS: Final[frozenset[str]] = frozenset({"artifacts", "spells"})
+_CATEGORIES_WITH_ICONS: Final[frozenset[str]] = frozenset(
+    {"artifacts", "spells", "interactables", "sids"}
+)
 
 _CATEGORY_LABELS: Final[dict[str, str]] = {
     "lists": "Content Lists",
@@ -42,8 +47,11 @@ _CATEGORY_LABELS: Final[dict[str, str]] = {
     "meta": "Meta Objects",
     "artifacts": "Artifacts",
     "spells": "Spells",
+    "interactables": "Map Objects",
 }
-_CATEGORY_ORDER: Final[list[str]] = ["lists", "pools", "sids", "meta", "artifacts", "spells"]
+_CATEGORY_ORDER: Final[list[str]] = [
+    "lists", "pools", "sids", "meta", "artifacts", "spells", "interactables",
+]
 
 
 class CatalogExplorer(QWidget):
@@ -108,7 +116,7 @@ class _CategoryTab(QWidget):
         self._search.textChanged.connect(self._apply_filter)
         outer.addWidget(self._search)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         outer.addWidget(splitter, stretch=1)
 
         self._list = QListWidget()
@@ -159,6 +167,8 @@ class _CategoryTab(QWidget):
             return sorted(self._catalog.known_artifact_sids())
         if self._category == "spells":
             return sorted(self._catalog.known_spell_sids())
+        if self._category == "interactables":
+            return sorted(self._catalog.known_interactable_sids())
         return []
 
     def _apply_filter(self, text: str) -> None:
@@ -179,6 +189,11 @@ class _CategoryTab(QWidget):
             return artifact_listable(self._catalog, sid)
         if self._category == "spells":
             return spell_listable(self._catalog, sid)
+        if self._category == "interactables":
+            return interactable_listable(self._catalog, sid)
+        if self._category == "sids":
+            # Surface icons/names for any SID that turns out to be a known asset.
+            return sid_listable(self._catalog, sid)
         return ListableItem(value=sid)
 
     def _on_current_item_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
@@ -201,6 +216,8 @@ class _CategoryTab(QWidget):
             html = self._render_artifact(sid)
         elif self._category == "spells":
             html = self._render_spell(sid)
+        elif self._category == "interactables":
+            html = self._render_interactable(sid)
         else:
             html = ""
         self._detail.setHtml(html)
@@ -217,6 +234,7 @@ class _CategoryTab(QWidget):
             "meta": "meta",
             "artifact": "artifacts",
             "spell": "spells",
+            "interactable": "interactables",
         }.get(kind)
         if category is not None:
             self._navigate(category, name)
@@ -391,6 +409,67 @@ class _CategoryTab(QWidget):
             else:
                 cell = escape(str(value))
             meta_rows.append(f"<tr><td><b>{escape(label)}</b></td><td>{cell}</td></tr>")
+        meta_rows.append(f"<tr><td><b>SID</b></td><td><code>{escape(sid)}</code></td></tr>")
+        meta_html = f"<table cellspacing='4' cellpadding='2'>{''.join(meta_rows)}</table>"
+
+        parts = [header_table, meta_html]
+        for ref_label, names, link_kind in (
+            ("Lists containing it", self._catalog.lists_containing(sid), "list"),
+            ("Pools that include it directly", self._catalog.pools_with_direct_sid(sid), "pool"),
+            ("Pools that can produce it (transitive)", self._catalog.pools_producing(sid), "pool"),
+            ("Pools banning it", self._catalog.pools_banning(sid), "pool"),
+        ):
+            if not names:
+                continue
+            parts.append(f"<h4>{escape(ref_label)} ({len(names)})</h4>")
+            parts.append("<p>" + _link_list(link_kind, names) + "</p>")
+        return "".join(parts)
+
+    def _render_interactable(self, sid: str) -> str:
+        data = self._catalog.get_interactable(sid)
+        if data is None:
+            return _not_found(sid)
+        name = data.get("name") or sid
+        description = data.get("description") or ""
+        narrative = data.get("narrative") or ""
+        icon_html = ""
+        icon_path = interactable_icon_path(self._catalog, sid)
+        if icon_path is not None:
+            icon_url = QUrl.fromLocalFile(str(icon_path)).toString()
+            icon_html = (
+                f"<img src='{escape(icon_url)}' width='64' height='64' "
+                "style='vertical-align: top; margin-right: 12px; image-rendering: pixelated;'/>"
+            )
+
+        header_table = (
+            "<table cellpadding='0' cellspacing='0'><tr>"
+            f"<td>{icon_html}</td>"
+            f"<td><h3 style='margin-top:0;'>{escape(str(name))}</h3>"
+            + (f"<p>{escape(str(description))}</p>" if description else "")
+            + "</td></tr></table>"
+        )
+        if narrative:
+            header_table += f"<p><i>{escape(str(narrative))}</i></p>"
+
+        meta_rows = []
+        for key, label in (
+            ("tag", "Tag"),
+            ("sizeX", "Size X"),
+            ("sizeZ", "Size Z"),
+            ("isInteractable", "Interactable"),
+            ("canBeMirrored", "Mirrorable"),
+        ):
+            value = data.get(key)
+            if value is None or value == "":
+                continue
+            meta_rows.append(
+                f"<tr><td><b>{escape(label)}</b></td><td>{escape(str(value))}</td></tr>"
+            )
+        prefs = data.get("prefs")
+        if isinstance(prefs, list) and prefs:
+            meta_rows.append(
+                "<tr><td><b>Prefabs</b></td><td>" + escape(", ".join(prefs)) + "</td></tr>"
+            )
         meta_rows.append(f"<tr><td><b>SID</b></td><td><code>{escape(sid)}</code></td></tr>")
         meta_html = f"<table cellspacing='4' cellpadding='2'>{''.join(meta_rows)}</table>"
 

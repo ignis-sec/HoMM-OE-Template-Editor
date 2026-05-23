@@ -1,13 +1,19 @@
-"""SidPicker — editable combo with autocomplete, sourced from a catalog callable."""
+"""SidPicker — editable combo with autocomplete, sourced from a catalog callable.
+
+`choices` can return either bare strings or :class:`ListableItem`s. When ListableItems
+provide a label/icon, the combo displays them while still committing the canonical
+`value` to the model.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QComboBox, QCompleter
 
 from templategen.services.commands import EditFieldCommand
+from templategen.ui.widgets.listable import ListableItem, to_listable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,7 +28,7 @@ class SidPicker(QComboBox):
         field: str,
         session: EditorSession,
         *,
-        choices: Callable[[], list[str]],
+        choices: Callable[[], list[str | ListableItem]],
     ) -> None:
         super().__init__()
         self._target = target
@@ -48,18 +54,40 @@ class SidPicker(QComboBox):
         with _block_signals(self):
             current_text = self.currentText()
             current_value = getattr(self._target, self._field)
-            text = current_text or ("" if current_value is None else str(current_value))
+            target_value = current_text or ("" if current_value is None else str(current_value))
+
+            items = to_listable(self._choices())
+            if any(i.icon is not None for i in items):
+                self.setIconSize(QSize(24, 24))
             self.clear()
-            self.addItems(list(self._choices()))
-            if text:
-                idx = self.findText(text)
-                if idx >= 0:
-                    self.setCurrentIndex(idx)
+            for item in items:
+                if item.icon is not None:
+                    self.addItem(item.icon, item.display, item.value)
                 else:
-                    self.setEditText(text)
+                    self.addItem(item.display, item.value)
+
+            if target_value:
+                matched = -1
+                for i in range(self.count()):
+                    if self.itemData(i) == target_value:
+                        matched = i
+                        break
+                if matched >= 0:
+                    self.setCurrentIndex(matched)
+                else:
+                    self.setEditText(target_value)
+
+    def _resolved_value(self) -> str | None:
+        text = self.currentText()
+        idx = self.currentIndex()
+        if idx >= 0 and self.itemText(idx) == text:
+            data = self.itemData(idx)
+            if isinstance(data, str):
+                return data or None
+        return text or None
 
     def _on_commit(self) -> None:
-        new = self.currentText() or None
+        new = self._resolved_value()
         if new != getattr(self._target, self._field):
             self._session.execute(EditFieldCommand(self._session, self._target, self._field, new))
 

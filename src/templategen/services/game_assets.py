@@ -97,12 +97,17 @@ def extract_named_textures(
     *,
     progress: Callable[[int, int], None] | None = None,
     kind: str = "icons",
+    prefer_size: tuple[int, int] | None = None,
 ) -> tuple[int, list[str]]:
     """Walk Texture2D objects in the game's _Data bundles, save matches as PNGs.
 
-    When multiple Texture2D objects share the same name (a hi-res BC7 source plus one or
-    more low-res placeholders), prefer the BC7-format texture (m_TextureFormat == 12);
-    fall back to whatever's available otherwise.
+    Picker rules when a name has multiple candidates:
+      - if `prefer_size` is set, pick a candidate whose decoded image matches that size
+        (used for the 64x64 interactable map icons, which share names with larger
+        atlases / hi-res variants we don't want here);
+      - otherwise prefer m_TextureFormat == 12 (BC7) — the canonical hi-res source for
+        artifacts and spells;
+      - in either case, fall back to the first candidate when nothing matches.
 
     Returns (saved_count, missing_icon_names).
     """
@@ -144,12 +149,9 @@ def extract_named_textures(
         options = candidates.get(name, [])
         if not options:
             continue
-        bc7 = next((data for fmt, data in options if fmt == _PREFERRED_TEXTURE_FORMAT), None)
-        if bc7 is not None:
-            chosen = bc7
+        chosen, picked_preferred = _pick_texture(options, prefer_size)
+        if picked_preferred:
             preferred_picks += 1
-        else:
-            chosen = options[0][1]
         try:
             image = chosen.image
         except Exception as exc:  # pragma: no cover - defensive
@@ -161,11 +163,34 @@ def extract_named_textures(
         if progress is not None:
             progress(saved, total)
 
+    rule = f"size={prefer_size}" if prefer_size is not None else f"m_TextureFormat={_PREFERRED_TEXTURE_FORMAT}"
     _log.info(
-        "extracted %d %s (%d disambiguated by preferring m_TextureFormat=%d)",
+        "extracted %d %s (%d disambiguated by preferring %s)",
         saved,
         kind,
         preferred_picks,
-        _PREFERRED_TEXTURE_FORMAT,
+        rule,
     )
     return saved, sorted(set(icon_names) - found)
+
+
+def _pick_texture(
+    options: list[tuple[int, object]],
+    prefer_size: tuple[int, int] | None,
+) -> tuple[object, bool]:
+    """Pick the best Texture2D candidate from a same-name set.
+
+    Returns (chosen_texture_data, used_preferred_rule).
+    """
+    if prefer_size is not None:
+        for _fmt, data in options:
+            try:
+                if data.image.size == prefer_size:
+                    return data, True
+            except Exception:
+                continue
+        return options[0][1], False
+    bc7 = next((data for fmt, data in options if fmt == _PREFERRED_TEXTURE_FORMAT), None)
+    if bc7 is not None:
+        return bc7, True
+    return options[0][1], False

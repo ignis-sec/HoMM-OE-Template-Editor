@@ -31,9 +31,10 @@ class CatalogSnapshot(TypedDict):
     spell_sids: list[str]
     artifacts: dict[str, dict[str, Any]]
     spells: dict[str, dict[str, Any]]
+    interactables: dict[str, dict[str, Any]]
 
 
-SCHEMA_VERSION: Final[int] = 5
+SCHEMA_VERSION: Final[int] = 6
 
 _BONUS_SIDS: Final[list[str]] = [
     "add_bonus_hero_item",
@@ -75,6 +76,7 @@ def build_snapshot(
     water_for_biome = _collect_water_for_biome(generator_root)
     artifacts = _collect_artifacts(core_root)
     spells = _collect_spells(core_root)
+    interactables = _collect_interactables(core_root)
 
     if item_icon_target_dir is not None:
         textures = texture_root or (core_root.parent / "Assets" / "Texture2D")
@@ -100,6 +102,7 @@ def build_snapshot(
         spell_sids=sorted(spells.keys()),
         artifacts=artifacts,
         spells=spells,
+        interactables=interactables,
     )
 
 
@@ -201,6 +204,63 @@ def _collect_spells(core_root: Path) -> dict[str, dict[str, Any]]:
                 payload["magic_type_key"] = magic_type
                 payload["magic_type"] = locale.get(magic_type, magic_type)
             out[sid] = payload
+    return out
+
+
+_INTERACTABLE_FIELDS_TO_KEEP: Final[tuple[str, ...]] = (
+    "tag",
+    "isInteractable",
+    "sizeX",
+    "sizeZ",
+    "canBeMirrored",
+)
+
+
+def _collect_interactables(core_root: Path) -> dict[str, dict[str, Any]]:
+    path = core_root / "DB" / "map" / "objects" / "4_interactables.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = _read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    entries = data.get("array") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return {}
+    locale = _load_localization(core_root, "mapObjects.json")
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        sid = entry.get("id")
+        if not isinstance(sid, str) or sid in out:
+            continue
+        payload: dict[str, Any] = {}
+        for field in _INTERACTABLE_FIELDS_TO_KEEP:
+            if field in entry:
+                payload[field] = entry[field]
+        prefs = entry.get("prefs")
+        if isinstance(prefs, list):
+            paths = [p for p in prefs if isinstance(p, str)]
+            payload["prefs"] = paths
+            if paths:
+                # Icon is the prefab-path stem; e.g. "interactive/mine_gold" -> "mine_gold".
+                payload["icon"] = paths[0].rsplit("/", 1)[-1]
+        name_key = f"{sid}_name"
+        if name_key in locale:
+            payload["name_key"] = name_key
+            payload["name"] = locale[name_key]
+        else:
+            payload["name"] = sid
+        desc_key = f"{sid}_description"
+        if desc_key in locale:
+            payload["description_key"] = desc_key
+            payload["description"] = locale[desc_key]
+        narrative_key = f"{sid}_narrativeDescription"
+        if narrative_key in locale:
+            payload["narrative_key"] = narrative_key
+            payload["narrative"] = locale[narrative_key]
+        out[sid] = payload
     return out
 
 

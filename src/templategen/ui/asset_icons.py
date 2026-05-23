@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtGui import QIcon
 
-from templategen.infra.paths import item_icons_dir, spell_icons_dir
+from templategen.infra.paths import interactable_icons_dir, item_icons_dir, spell_icons_dir
 from templategen.ui.widgets.listable import ListableItem
 
 if TYPE_CHECKING:
@@ -76,3 +76,53 @@ def spell_listable(catalog: ReferenceCatalog, sid: str) -> ListableItem:
 def spell_listables(catalog: ReferenceCatalog) -> list[ListableItem]:
     """Every known spell as a ListableItem, sorted by SID."""
     return [spell_listable(catalog, sid) for sid in sorted(catalog.known_spell_sids())]
+
+
+def interactable_icon_path(catalog: ReferenceCatalog, sid: str) -> Path | None:
+    entry = catalog.get_interactable(sid)
+    if entry is None:
+        return None
+    icon = entry.get("icon")
+    if not isinstance(icon, str):
+        return None
+    path = interactable_icons_dir() / f"{icon}.png"
+    return path if path.exists() else None
+
+
+def interactable_qicon(catalog: ReferenceCatalog, sid: str) -> QIcon | None:
+    path = interactable_icon_path(catalog, sid)
+    return QIcon(str(path)) if path is not None else None
+
+
+def interactable_listable(catalog: ReferenceCatalog, sid: str) -> ListableItem:
+    entry = catalog.get_interactable(sid)
+    label: str | None = None
+    if entry is not None:
+        name = entry.get("name")
+        if isinstance(name, str) and name and name != sid:
+            label = f"{name}  ({sid})"
+    return ListableItem(value=sid, label=label, icon=interactable_qicon(catalog, sid))
+
+
+def interactable_listables(catalog: ReferenceCatalog) -> list[ListableItem]:
+    """Every known interactable as a ListableItem, sorted by SID."""
+    return [interactable_listable(catalog, sid) for sid in sorted(catalog.known_interactable_sids())]
+
+
+def sid_listable(catalog: ReferenceCatalog, sid: str) -> ListableItem:
+    """Resolve any SID through whichever rich-data table it belongs to.
+
+    Picks the first table that recognizes the SID (interactable → artifact → spell);
+    falls back to a plain ListableItem if none does.
+    """
+    if catalog.get_interactable(sid) is not None:
+        return interactable_listable(catalog, sid)
+    if catalog.get_artifact(sid) is not None:
+        return artifact_listable(catalog, sid)
+    if catalog.get_spell(sid) is not None:
+        return spell_listable(catalog, sid)
+    return ListableItem(value=sid)
+
+
+def sid_listables(catalog: ReferenceCatalog, sids: list[str]) -> list[ListableItem]:
+    return [sid_listable(catalog, s) for s in sids]

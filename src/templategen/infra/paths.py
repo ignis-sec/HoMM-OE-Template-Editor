@@ -28,3 +28,7 @@ def item_icons_dir() -> Path:
 
 def spell_icons_dir() -> Path:
     return app_data_root() / "magics"
+
+
+def interactable_icons_dir() -> Path:
+    return app_data_root() / "interactables"

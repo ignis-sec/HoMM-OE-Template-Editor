@@ -19,6 +19,7 @@ from templategen.infra.paths import (
     app_data_root,
     catalog_json_path,
     extracted_core_dir,
+    interactable_icons_dir,
     item_icons_dir,
     spell_icons_dir,
 )
@@ -185,37 +186,57 @@ class _BuildWorker(QThread):
 
             artifact_icons = _icon_names_from(snapshot.get("artifacts", {}))
             spell_icons = _icon_names_from(snapshot.get("spells", {}))
+            interactable_icons = _icon_names_from(snapshot.get("interactables", {}))
 
-            self.step.emit(55, "Extracting artifact icons from game assets…")
+            self.step.emit(50, "Extracting artifact icons from game assets…")
             saved_a, missing_a = extract_named_textures(
                 self._game_install,
                 artifact_icons,
                 item_icons_dir(),
                 kind="artifact icons",
                 progress=lambda done, total: self.step.emit(
-                    55 + int(20 * done / max(total, 1)),
+                    50 + int(15 * done / max(total, 1)),
                     f"Extracting artifact icons ({done}/{total})…",
                 ),
             )
 
-            self.step.emit(75, "Extracting spell icons from game assets…")
+            self.step.emit(65, "Extracting spell icons from game assets…")
             saved_s, missing_s = extract_named_textures(
                 self._game_install,
                 spell_icons,
                 spell_icons_dir(),
                 kind="spell icons",
                 progress=lambda done, total: self.step.emit(
-                    75 + int(20 * done / max(total, 1)),
+                    65 + int(15 * done / max(total, 1)),
                     f"Extracting spell icons ({done}/{total})…",
+                ),
+            )
+
+            self.step.emit(80, "Extracting map-object icons from game assets…")
+            saved_i, missing_i = extract_named_textures(
+                self._game_install,
+                interactable_icons,
+                interactable_icons_dir(),
+                kind="interactable icons",
+                prefer_size=(64, 64),
+                progress=lambda done, total: self.step.emit(
+                    80 + int(15 * done / max(total, 1)),
+                    f"Extracting map-object icons ({done}/{total})…",
                 ),
             )
 
             self.step.emit(98, "Finishing…")
             _log.info(
-                "first-run build: %d artifacts (%d icons, %d missing), %d spells (%d icons, %d missing)",
-                len(artifact_icons), saved_a, len(missing_a),
-                len(spell_icons), saved_s, len(missing_s),
+                "first-run build: %d artifacts (%d/%d), %d spells (%d/%d), %d interactables (%d/%d)",
+                len(artifact_icons), saved_a, len(artifact_icons),
+                len(spell_icons), saved_s, len(spell_icons),
+                len(interactable_icons), saved_i, len(interactable_icons),
             )
+            if missing_a or missing_s or missing_i:
+                _log.info(
+                    "missing icon assets — artifacts: %s, spells: %s, interactables: %s",
+                    missing_a[:5], missing_s[:5], missing_i[:5],
+                )
             self.step.emit(100, "Done")
         except Exception as exc:
             self.error = f"{type(exc).__name__}: {exc}"

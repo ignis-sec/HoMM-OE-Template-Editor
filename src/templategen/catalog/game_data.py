@@ -73,6 +73,7 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._spell_sids = list(data.get("spell_sids", []))
         self._artifacts = dict(data.get("artifacts", {}))
         self._spells = dict(data.get("spells", {}))
+        self._interactables = dict(data.get("interactables", {}))
         self._build_indices()
         self.changed.emit()
 
@@ -91,6 +92,7 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._spell_sids: list[str] = []
         self._artifacts: dict[str, dict[str, Any]] = {}
         self._spells: dict[str, dict[str, Any]] = {}
+        self._interactables: dict[str, dict[str, Any]] = {}
         self._sid_in_lists: dict[str, list[str]] = {}
         self._sid_in_pool_content: dict[str, list[str]] = {}
         self._sid_produced_by_pools: dict[str, list[str]] = {}
@@ -175,6 +177,12 @@ class GameDataCatalog(QObject, ReferenceCatalog):
 
     def get_spell(self, sid: str) -> dict[str, Any] | None:
         return self._spells.get(sid)
+
+    def known_interactable_sids(self) -> Sequence[str]:
+        return list(self._interactables.keys())
+
+    def get_interactable(self, sid: str) -> dict[str, Any] | None:
+        return self._interactables.get(sid)
 
     # ── detail lookups ───────────────────────────────────────────────────
     def get_content_list(self, name: str) -> dict[str, Any] | None:
