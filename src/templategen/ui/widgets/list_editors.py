@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from templategen.services.commands import AddListItemCommand, EditFieldCommand, RemoveListItemCommand
+from templategen.ui.widgets.listable import ListableItem, to_listable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -370,33 +371,52 @@ class ReferenceListEditor(_ListEditorBase):
         field: str,
         session: EditorSession,
         *,
-        choices: Callable[[], list[str]],
+        choices: Callable[[], list[str | ListableItem]],
         accept_single_string: bool = False,
     ) -> None:
         self._choices = choices
         super().__init__(target, field, session, accept_single_string=accept_single_string)
 
     def _default_value(self) -> Any:
-        options = self._choices()
-        return options[0] if options else ""
+        items = to_listable(self._choices())
+        return items[0].value if items else ""
 
     def _build_input(self, index: int, value: Any) -> QWidget:
         widget = QComboBox()
         widget.setEditable(True)
-        widget.addItems(self._choices())
-        text = "" if value is None else str(value)
-        if text:
-            existing = widget.findText(text)
-            if existing >= 0:
-                widget.setCurrentIndex(existing)
+        items = to_listable(self._choices())
+        if any(i.icon is not None for i in items):
+            widget.setIconSize(QSize(32, 32))
+        for item in items:
+            if item.icon is not None:
+                widget.addItem(item.icon, item.display, item.value)
             else:
-                widget.setCurrentText(text)
-        widget.activated.connect(
-            lambda _idx, i=index, w=widget: self._on_changed(i, w.currentText())
-        )
+                widget.addItem(item.display, item.value)
+
+        target_value = "" if value is None else str(value)
+        if target_value:
+            matched = -1
+            for i in range(widget.count()):
+                if widget.itemData(i) == target_value:
+                    matched = i
+                    break
+            if matched >= 0:
+                widget.setCurrentIndex(matched)
+            else:
+                widget.setCurrentText(target_value)
+
+        def commit(row: int = index, w: QComboBox = widget) -> None:
+            idx = w.currentIndex()
+            text = w.currentText()
+            if idx >= 0 and w.itemText(idx) == text:
+                data = w.itemData(idx)
+                resolved = data if isinstance(data, str) else text
+            else:
+                resolved = text
+            self._on_changed(row, resolved)
+
+        widget.activated.connect(lambda _idx: commit())
         line_edit = widget.lineEdit()
         if line_edit is not None:
-            line_edit.editingFinished.connect(
-                lambda i=index, w=widget: self._on_changed(i, w.currentText())
-            )
+            line_edit.editingFinished.connect(commit)
         return widget

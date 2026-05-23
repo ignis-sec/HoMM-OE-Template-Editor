@@ -4,27 +4,27 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
 from templategen.catalog.builder import SCHEMA_VERSION
 from templategen.catalog.catalog import ReferenceCatalog
+from templategen.infra.paths import catalog_json_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
-_DEFAULT_PATH = Path("data/catalog.json")
 _log = logging.getLogger(__name__)
 
 
 class GameDataCatalog(QObject, ReferenceCatalog):
     changed = Signal()
 
-    def __init__(self, snapshot_path: Path = _DEFAULT_PATH) -> None:
+    def __init__(self, snapshot_path: Path | None = None) -> None:
         super().__init__()
-        self._path = snapshot_path
+        self._path = snapshot_path if snapshot_path is not None else catalog_json_path()
         self._reset()
         self.reload()
 
@@ -71,6 +71,7 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._water_for_biome = dict(data.get("water_for_biome", {}))
         self._artifact_sids = list(data.get("artifact_sids", []))
         self._spell_sids = list(data.get("spell_sids", []))
+        self._artifacts = dict(data.get("artifacts", {}))
         self._build_indices()
         self.changed.emit()
 
@@ -87,6 +88,7 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._water_for_biome: dict[str, str] = {}
         self._artifact_sids: list[str] = []
         self._spell_sids: list[str] = []
+        self._artifacts: dict[str, dict[str, Any]] = {}
         self._sid_in_lists: dict[str, list[str]] = {}
         self._sid_in_pool_content: dict[str, list[str]] = {}
         self._sid_produced_by_pools: dict[str, list[str]] = {}
@@ -165,6 +167,9 @@ class GameDataCatalog(QObject, ReferenceCatalog):
 
     def known_spell_sids(self) -> Sequence[str]:
         return self._spell_sids
+
+    def get_artifact(self, sid: str) -> dict[str, Any] | None:
+        return self._artifacts.get(sid)
 
     # ── detail lookups ───────────────────────────────────────────────────
     def get_content_list(self, name: str) -> dict[str, Any] | None:

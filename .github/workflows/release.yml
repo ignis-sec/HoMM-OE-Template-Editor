@@ -53,8 +53,8 @@ jobs:
             --noconfirm `
             --log-level INFO `
             --add-data "src/templategen/img;templategen/img" `
-            --add-data "data/catalog.json;data" `
             --collect-submodules templategen `
+            --collect-all UnityPy `
             launch.py
 
       - name: Inspect build output
@@ -67,17 +67,14 @@ jobs:
           Write-Host ("exe size: {0:N1} MB" -f $size)
           if ($size -lt 30) { throw "exe is only ${size}MB — PySide6 was not bundled" }
 
-      - name: Stage release folder (exe + data + img)
+      - name: Stage release folder (exe only — catalog + icons are built from the user's
+              game install on first launch)
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
           $stage = "release-staging/HoMM OE Template Editor-$tag-windows"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          New-Item -ItemType Directory -Force -Path "$stage/data" | Out-Null
-          New-Item -ItemType Directory -Force -Path "$stage/img" | Out-Null
           Move-Item "dist/HoMM OE Template Editor.exe" "$stage/HoMM OE Template Editor.exe"
-          Copy-Item "data/catalog.json" "$stage/data/catalog.json"
-          Copy-Item -Recurse "src/templategen/img/*" "$stage/img/"
           Get-ChildItem $stage -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
 
       - name: Zip release folder

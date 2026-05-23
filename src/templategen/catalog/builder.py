@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, TypedDict
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,9 +29,10 @@ class CatalogSnapshot(TypedDict):
     water_for_biome: dict[str, str]
     artifact_sids: list[str]
     spell_sids: list[str]
+    artifacts: dict[str, dict[str, Any]]
 
 
-SCHEMA_VERSION: Final[int] = 3
+SCHEMA_VERSION: Final[int] = 4
 
 _BONUS_SIDS: Final[list[str]] = [
     "add_bonus_hero_item",
@@ -52,7 +56,12 @@ class CatalogBuildError(Exception):
     pass
 
 
-def build_snapshot(core_path: Path) -> CatalogSnapshot:
+def build_snapshot(
+    core_path: Path,
+    *,
+    item_icon_target_dir: Path | None = None,
+    texture_root: Path | None = None,
+) -> CatalogSnapshot:
     generator_root = _resolve_generator_root(core_path)
     core_root = generator_root.parent
 
@@ -63,8 +72,12 @@ def build_snapshot(core_path: Path) -> CatalogSnapshot:
     portals = _collect_portals(generator_root)
     resource_by_mine = _collect_resource_by_mine(generator_root)
     water_for_biome = _collect_water_for_biome(generator_root)
-    artifact_sids = _collect_artifact_sids(core_root)
+    artifacts = _collect_artifacts(core_root)
     spell_sids = _collect_spell_sids(core_root)
+
+    if item_icon_target_dir is not None:
+        textures = texture_root or (core_root.parent / "Assets" / "Texture2D")
+        _copy_artifact_icons(artifacts, textures, item_icon_target_dir)
 
     sids = sorted(_collect_sids(generator_root, content_lists, content_pools, meta_objects))
 
@@ -82,8 +95,9 @@ def build_snapshot(core_path: Path) -> CatalogSnapshot:
         portals=portals,
         resource_by_mine=resource_by_mine,
         water_for_biome=water_for_biome,
-        artifact_sids=artifact_sids,
+        artifact_sids=sorted(artifacts.keys()),
         spell_sids=spell_sids,
+        artifacts=artifacts,
     )
 
 
@@ -132,12 +146,149 @@ def _collect_array_ids(directory: Path) -> list[str]:
     return out
 
 
-def _collect_artifact_sids(core_root: Path) -> list[str]:
-    return _collect_array_ids(core_root / "DB" / "items" / "items")
-
-
 def _collect_spell_sids(core_root: Path) -> list[str]:
     return _collect_array_ids(core_root / "DB" / "magics")
+
+
+def _load_localization(core_root: Path, file_name: str, language: str = "english") -> dict[str, str]:
+    path = core_root / "Lang" / language / "texts" / file_name
+    if not path.exists():
+        return {}
+    try:
+        data = _read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for entry in data.get("tokens") or []:
+        if not isinstance(entry, dict):
+            continue
+        sid = entry.get("sid")
+        text = entry.get("text")
+        if isinstance(sid, str) and isinstance(text, str):
+            out[sid] = text
+    return out
+
+
+_ARTIFACT_FIELDS_TO_KEEP: Final[tuple[str, ...]] = (
+    "icon",
+    "slot_",
+    "rarity",
+    "itemSet",
+    "goodsValue",
+)
+
+
+def _collect_artifacts(core_root: Path) -> dict[str, dict[str, Any]]:
+    items_dir = core_root / "DB" / "items" / "items"
+    locale = _load_localization(core_root, "artifacts.json")
+    out: dict[str, dict[str, Any]] = {}
+    if not items_dir.is_dir():
+        return out
+    for path in sorted(items_dir.glob("*.json")):
+        if path.name.startswith("test_"):
+            continue
+        try:
+            data = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        entries = data.get("array") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            sid = entry.get("id")
+            if not isinstance(sid, str) or sid in out:
+                continue
+            payload: dict[str, Any] = {}
+            for field in _ARTIFACT_FIELDS_TO_KEEP:
+                if field in entry:
+                    payload[field] = entry[field]
+            name_key = entry.get("name")
+            desc_key = entry.get("description")
+            if isinstance(name_key, str):
+                payload["name_key"] = name_key
+                payload["name"] = locale.get(name_key, name_key)
+            if isinstance(desc_key, str):
+                payload["description_key"] = desc_key
+                payload["description"] = locale.get(desc_key, "")
+            out[sid] = payload
+    return out
+
+
+def _read_png_size(path: Path) -> tuple[int, int] | None:
+    """Parse the IHDR chunk to return (width, height) without loading the image."""
+    try:
+        with path.open("rb") as f:
+            f.seek(16)  # 8-byte PNG sig + 4 length + 4 "IHDR"
+            data = f.read(8)
+    except OSError:
+        return None
+    if len(data) != 8:
+        return None
+    return (int.from_bytes(data[:4], "big"), int.from_bytes(data[4:], "big"))
+
+
+def _resolve_icon_source(texture_root: Path, icon: str) -> Path | None:
+    """Pick the best source PNG for an icon, preferring a `_0` variant when the
+    base file is the 64x64 placeholder size."""
+    base = texture_root / f"{icon}.png"
+    if not base.exists():
+        return None
+    size = _read_png_size(base)
+    if size == (64, 64):
+        alt = texture_root / f"{icon}_0.png"
+        if alt.exists():
+            return alt
+    return base
+
+
+def _copy_artifact_icons(
+    artifacts: dict[str, dict[str, Any]],
+    texture_root: Path,
+    target_dir: Path,
+) -> None:
+    """Copy each referenced artifact icon PNG into `target_dir`.
+
+    Only files matching the `icon` field of an item are copied — the source dir holds
+    8000+ images and we don't want to ship them all.
+    """
+    import shutil
+
+    if not texture_root.is_dir():
+        return
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    missing: list[str] = []
+    upscaled = 0
+    for sid, payload in artifacts.items():
+        icon = payload.get("icon")
+        if not isinstance(icon, str):
+            continue
+        src = _resolve_icon_source(texture_root, icon)
+        if src is None:
+            missing.append(sid)
+            continue
+        if src.name != f"{icon}.png":
+            upscaled += 1
+        dst = target_dir / f"{icon}.png"
+        shutil.copyfile(src, dst)
+        copied += 1
+    if missing:
+        _log.warning(
+            "%d artifact icon(s) missing from %s: %s...",
+            len(missing),
+            texture_root,
+            missing[:5],
+        )
+    _log.info(
+        "copied %d artifact icons (%d resolved to _0 variant) to %s",
+        copied,
+        upscaled,
+        target_dir,
+    )
 
 
 def _collect_content_lists(root: Path) -> dict[str, dict[str, Any]]:

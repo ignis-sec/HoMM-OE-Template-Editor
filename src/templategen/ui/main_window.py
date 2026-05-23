@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from templategen.catalog.builder import CatalogBuildError, build_snapshot, write_snapshot
 from templategen.io.template_image import render_template_png, template_png_path
 from templategen.model.enums import OrientationMode
 from templategen.model.variant import Orientation, Variant
@@ -31,6 +30,7 @@ from templategen.services.commands import AddVariantCommand, RemoveVariantComman
 from templategen.services.validator import Validator
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
+from templategen.ui.dialogs.first_run import rebuild_catalog_interactive
 from templategen.ui.dialogs.template_settings import TemplateSettingsDialog
 from templategen.ui.dialogs.validation_results import ValidationResultsDialog
 from templategen.ui.metadata import CHANGELOG, VERSION
@@ -146,7 +146,7 @@ class MainWindow(QMainWindow):
         self.action_template_settings = QAction(self._icons.get("settings"), "Template &Settings…", self)
         self.action_template_settings.triggered.connect(self._on_template_settings)
 
-        self.action_rebuild_catalog = QAction("&Rebuild Catalog from game-data…", self)
+        self.action_rebuild_catalog = QAction("&Rebuild Catalog from game install…", self)
         self.action_rebuild_catalog.triggered.connect(self._on_rebuild_catalog)
 
         self.action_reload_catalog = QAction("Re&load Catalog snapshot", self)
@@ -565,25 +565,13 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_rebuild_catalog(self) -> None:
-        default_dir = str(Path.cwd() / "game-data" / "Core")
-        if not Path(default_dir).exists():
-            default_dir = str(Path.cwd())
-        chosen = QFileDialog.getExistingDirectory(self, "Locate the game's Core folder", default_dir)
-        if not chosen:
-            return
-        try:
-            snapshot = build_snapshot(Path(chosen))
-            write_snapshot(snapshot, self._catalog.snapshot_path)
-        except (CatalogBuildError, OSError) as exc:
-            QMessageBox.critical(self, "Catalog rebuild failed", str(exc))
+        if not rebuild_catalog_interactive(self):
             return
         self._catalog.reload()
-        self.statusBar().showMessage(
-            f"Catalog rebuilt: {len(snapshot['sids'])} SIDs, "
-            f"{len(snapshot['content_lists'])} lists, "
-            f"{len(snapshot['content_pools'])} pools",
-            5000,
-        )
+        if self._catalog.is_loaded():
+            self.statusBar().showMessage("Catalog rebuilt from game install", 4000)
+        else:
+            self.statusBar().showMessage("Catalog build failed (see log)", 4000)
 
     def _on_reload_catalog(self) -> None:
         self._catalog.reload()
