@@ -42,6 +42,39 @@ class EditFieldCommand(Command):
         self._session.model_object_changed.emit(self._target)
 
 
+class UnsetFieldCommand(Command):
+    """Restore a Pydantic field to its 'never set' state so the writer's
+    `exclude_unset=True` drops it from the dumped JSON. Used for optional fields
+    where omission is semantically different from an explicit null."""
+
+    def __init__(
+        self,
+        session: EditorSession,
+        target: object,
+        field: str,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Clear {field}")
+        self._target = target
+        self._field = field
+        self._old = getattr(target, field)
+        self._old_was_set = field in target.__pydantic_fields_set__
+
+    def redo(self) -> None:
+        default = type(self._target).model_fields[self._field].get_default(call_default_factory=True)
+        object.__setattr__(self._target, self._field, default)
+        self._target.__pydantic_fields_set__.discard(self._field)
+        self._session.model_object_changed.emit(self._target)
+
+    def undo(self) -> None:
+        if self._old_was_set:
+            setattr(self._target, self._field, self._old)
+        else:
+            object.__setattr__(self._target, self._field, self._old)
+            self._target.__pydantic_fields_set__.discard(self._field)
+        self._session.model_object_changed.emit(self._target)
+
+
 class AddListItemCommand(Command):
     def __init__(
         self,

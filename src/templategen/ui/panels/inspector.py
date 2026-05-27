@@ -55,7 +55,11 @@ from templategen.model.main_objects import (
 )
 from templategen.model.selectors import BiomeSelector, FactionSelector
 from templategen.model.zone import EncounterHolesSettings, Road, Zone
-from templategen.services.commands import ChangeConnectionTypeCommand
+from templategen.services.commands import (
+    ChangeConnectionTypeCommand,
+    EditFieldCommand,
+    UnsetFieldCommand,
+)
 from templategen.ui.asset_icons import (
     content_sid_listables,
     fraction_listables,
@@ -439,7 +443,7 @@ class Inspector(QWidget):
                 choices=self._catalog.known_building_constructions,
             ),
         )
-        misc.addRow("Owner:", self._combo(mo, "owner", _PLAYER_VALUES))
+        misc.addRow("Owner:", self._optional_combo(mo, "owner", _PLAYER_VALUES))
         misc.addRow("Factions:", self._fraction_list(mo, "factions"))
         misc.addRow("Is key object:", self._check(mo, "isKeyObject"))
         misc.addRow("Hold city win con:", self._check(mo, "holdCityWinCon"))
@@ -930,6 +934,39 @@ class Inspector(QWidget):
         widget = QComboBox()
         widget.setMinimumWidth(_INPUT_MIN_WIDTH)
         self._refreshers.append(bind_choice(widget, target, field, self._session, choices))
+        return widget
+
+    def _optional_combo(self, target: object, field: str, choices: list[str]) -> QComboBox:
+        """Combo with a leading "(none)" entry that clears the field via UnsetFieldCommand,
+        so the writer (exclude_unset=True) omits it from the dumped JSON."""
+        sentinel = "(none)"
+        widget = QComboBox()
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
+        widget.addItem(sentinel)
+        widget.addItems(choices)
+
+        def select_current() -> None:
+            current = getattr(target, field)
+            text = sentinel if current is None else str(current)
+            idx = widget.findText(text)
+            widget.blockSignals(True)
+            widget.setCurrentIndex(idx if idx >= 0 else 0)
+            widget.blockSignals(False)
+
+        select_current()
+
+        def on_commit(_index: int) -> None:
+            picked = widget.currentText()
+            current = getattr(target, field)
+            if picked == sentinel:
+                if current is not None or field in target.__pydantic_fields_set__:
+                    self._session.execute(UnsetFieldCommand(self._session, target, field))
+            else:
+                if picked != current:
+                    self._session.execute(EditFieldCommand(self._session, target, field, picked))
+
+        widget.activated.connect(on_commit)
+        self._refreshers.append(select_current)
         return widget
 
     def _sid_picker(

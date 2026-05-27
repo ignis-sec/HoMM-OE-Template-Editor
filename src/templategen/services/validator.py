@@ -76,6 +76,8 @@ class Validator:
                             )
                         )
 
+            # Named connections that touch each zone — used to cross-check roads.
+            connections_by_zone: dict[str, set[str]] = {n: set() for n in zone_names}
             for conn in variant.connections:
                 label = conn.name or f"({conn.from_}→{conn.to})"
                 if conn.name:
@@ -88,6 +90,9 @@ class Validator:
                             )
                         )
                     connection_names.add(conn.name)
+                    for endpoint in (conn.from_, conn.to):
+                        if endpoint in connections_by_zone:
+                            connections_by_zone[endpoint].add(conn.name)
                 if conn.from_ not in zone_names:
                     issues.append(
                         ValidationIssue(
@@ -102,6 +107,34 @@ class Validator:
                             Severity.ERROR,
                             f"{v_label}: connection {label} to='{conn.to}' refers to unknown zone",
                             conn,
+                        )
+                    )
+
+            for zone in variant.zones:
+                touching = connections_by_zone.get(zone.name, set())
+                referenced: set[str] = set()
+                for road in zone.roads or []:
+                    for anchor in (road.from_, road.to):
+                        if anchor.type != "Connection" or not anchor.args:
+                            continue
+                        ref = str(anchor.args[0])
+                        referenced.add(ref)
+                        if ref not in touching:
+                            issues.append(
+                                ValidationIssue(
+                                    Severity.ERROR,
+                                    f"{v_label}: zone '{zone.name}' has a road pointing to "
+                                    f"connection '{ref}', which does not touch this zone",
+                                    zone,
+                                )
+                            )
+                for conn_name in sorted(touching - referenced):
+                    issues.append(
+                        ValidationIssue(
+                            Severity.WARNING,
+                            f"{v_label}: zone '{zone.name}' has connection '{conn_name}' but no "
+                            f"road leading to it",
+                            zone,
                         )
                     )
 
