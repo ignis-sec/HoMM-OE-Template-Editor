@@ -68,11 +68,13 @@ jobs:
         shell: pwsh
         run: |
           # UnityPy lazily imports its native texture decoders (texture2ddecoder
-          # for BC7/DXT, etcpak for ETC, astc_encoder_py for ASTC) and Pillow's
-          # plugins, so PyInstaller's static analysis misses them with just
-          # --collect-all UnityPy. Without these, catalog metadata reads fine but
-          # every texture decode silently raises ImportError and no icons get
-          # saved. Collect them explicitly.
+          # for BC7/DXT, etcpak for ETC, astc_encoder_py for ASTC), Pillow's
+          # plugins, and fmod_toolkit's bundled fmod.dll (Texture2D reads route
+          # through the same asset loader that touches audio support, so the
+          # FMOD native lib must be present even though we never decode audio).
+          # PyInstaller's static analysis misses all of these with just
+          # --collect-all UnityPy. Without them, catalog metadata reads fine but
+          # every texture decode raises and no icons get saved.
           pyinstaller `
             --name "HoMM OE Template Editor" `
             --onefile `
@@ -85,6 +87,7 @@ jobs:
             --collect-all texture2ddecoder `
             --collect-all etcpak `
             --collect-all astc_encoder_py `
+            --collect-all fmod_toolkit `
             --collect-all PIL `
             launch.py
 
