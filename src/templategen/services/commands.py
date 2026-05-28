@@ -8,6 +8,7 @@ from PySide6.QtCore import QPointF
 from PySide6.QtGui import QUndoCommand
 
 if TYPE_CHECKING:
+    from templategen.model.template import Template
     from templategen.services.session import EditorSession
     from templategen.ui.canvas.graph_scene import GraphScene
 
@@ -40,6 +41,79 @@ class EditFieldCommand(Command):
     def undo(self) -> None:
         setattr(self._target, self._field, self._old)
         self._session.model_object_changed.emit(self._target)
+
+
+class RenameLibraryItemCommand(Command):
+    """Rename a ZoneLayout / MandatoryContentBundle / ContentCountLimit and cascade
+    the new name to every reference in every variant. One atomic undo step."""
+
+    def __init__(
+        self,
+        session: EditorSession,
+        template: Template,
+        target: object,
+        new_name: str,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Rename to {new_name}")
+        self._template = template
+        self._target = target
+        self._new = new_name
+        self._old = target.name
+
+    def redo(self) -> None:
+        self._apply(self._old, self._new)
+
+    def undo(self) -> None:
+        self._apply(self._new, self._old)
+
+    def _apply(self, old: str, new: str) -> None:
+        # Local imports to avoid circulars at module load.
+        from templategen.model.content import ContentCountLimit, MandatoryContentBundle
+        from templategen.model.layouts import ZoneLayout
+
+        if old == new:
+            return
+        self._target.name = new
+        touched: list[object] = [self._target]
+
+        def touch(obj: object) -> None:
+            if obj not in touched:
+                touched.append(obj)
+
+        for variant in self._template.variants:
+            for zone in variant.zones:
+                if isinstance(self._target, ZoneLayout):
+                    if zone.layout == old:
+                        zone.layout = new
+                        touch(zone)
+                elif isinstance(self._target, MandatoryContentBundle):
+                    if zone.mandatoryContent:
+                        for i, ref in enumerate(zone.mandatoryContent):
+                            if ref == old:
+                                zone.mandatoryContent[i] = new
+                                touch(zone)
+                    for road in zone.roads or []:
+                        for anchor in (road.from_, road.to):
+                            if anchor.type != "MandatoryContent":
+                                continue
+                            for i, arg in enumerate(anchor.args):
+                                if arg == old:
+                                    anchor.args[i] = new
+                                    touch(zone)
+                elif isinstance(self._target, ContentCountLimit):
+                    refs = zone.contentCountLimits
+                    if refs == old:
+                        zone.contentCountLimits = new
+                        touch(zone)
+                    elif isinstance(refs, list):
+                        for i, ref in enumerate(refs):
+                            if ref == old:
+                                refs[i] = new
+                                touch(zone)
+
+        for obj in touched:
+            self._session.model_object_changed.emit(obj)
 
 
 class UnsetFieldCommand(Command):

@@ -8,7 +8,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeyEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QInputDialog,
     QMenu,
+    QMessageBox,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -19,7 +21,11 @@ from PySide6.QtWidgets import (
 from templategen.model.content import ContentCountLimit, MandatoryContentBundle
 from templategen.model.layouts import ZoneLayout
 from templategen.model.template import Template
-from templategen.services.commands import AddListItemCommand, RemoveListItemCommand
+from templategen.services.commands import (
+    AddListItemCommand,
+    RemoveListItemCommand,
+    RenameLibraryItemCommand,
+)
 from templategen.services.naming import unique_name
 
 if TYPE_CHECKING:
@@ -170,6 +176,9 @@ class LibraryPanel(QWidget):
 
         if model is not None:
             menu.addSeparator()
+            rename_action = QAction("Rename…", self)
+            rename_action.triggered.connect(lambda: self._rename(item))
+            menu.addAction(rename_action)
             duplicate_action = QAction("Duplicate", self)
             duplicate_action.triggered.connect(lambda: self._duplicate(item))
             menu.addAction(duplicate_action)
@@ -237,6 +246,43 @@ class LibraryPanel(QWidget):
             return
         self._clipboard.set_item(model.model_copy(deep=True))
         self._remove_item(item)
+
+    def _rename(self, item: QTreeWidgetItem) -> None:
+        model = item.data(_NAME_COLUMN, _MODEL_ROLE)
+        parent = item.parent()
+        template = self._session.template
+        if model is None or parent is None or template is None:
+            return
+        field = parent.data(_NAME_COLUMN, _BRANCH_ROLE)
+        old_name = getattr(model, "name", "")
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename",
+            f"New name for '{old_name}':",
+            text=old_name,
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == old_name:
+            return
+        existing = {n for n in self._existing_names(field) if n != old_name}
+        if new_name in existing:
+            QMessageBox.warning(
+                self,
+                "Name in use",
+                f"'{new_name}' is already used by another {parent.text(_NAME_COLUMN).split(' (')[0].lower()} item.",
+            )
+            return
+        self._session.execute(
+            RenameLibraryItemCommand(
+                self._session,
+                template,
+                model,
+                new_name,
+                f"Rename {old_name} → {new_name}",
+            )
+        )
 
     def _duplicate(self, item: QTreeWidgetItem) -> None:
         model = item.data(_NAME_COLUMN, _MODEL_ROLE)
