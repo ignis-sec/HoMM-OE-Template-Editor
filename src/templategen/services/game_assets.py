@@ -75,9 +75,12 @@ def is_game_install(path: Path | None) -> bool:
 
 def find_game_install() -> Path | None:
     """Return the first probed default path that looks like a valid install, or None."""
-    for candidate in default_game_paths():
+    candidates = default_game_paths()
+    for candidate in candidates:
         if is_game_install(candidate):
+            _log.info("found game install at %s", candidate)
             return candidate
+    _log.info("no game install found among %d default paths", len(candidates))
     return None
 
 
@@ -94,6 +97,7 @@ def extract_core_zip(game_install: Path, target_dir: Path) -> Path:
     src = core_zip_path(game_install)
     if not src.is_file():
         raise FileNotFoundError(f"Core.zip not found at {src}")
+    _log.info("extracting %s -> %s", src, target_dir)
     # Wipe any previous extraction so stale files don't linger across game updates.
     if target_dir.exists():
         shutil.rmtree(target_dir)

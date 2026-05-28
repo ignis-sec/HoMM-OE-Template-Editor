@@ -37,6 +37,7 @@ class GameDataCatalog(QObject, ReferenceCatalog):
 
     def reload(self) -> None:
         if not self._path.exists():
+            _log.info("no catalog snapshot at %s — using empty catalog", self._path)
             self._reset()
             self.changed.emit()
             return
@@ -77,6 +78,19 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._resources = dict(data.get("resources", {}))
         self._fractions = list(data.get("fractions", []))
         self._build_indices()
+        _log.info(
+            "loaded catalog v%s: %d sids, %d artifacts, %d spells, %d interactables, "
+            "%d resources, %d fractions, %d content_lists, %d content_pools",
+            version,
+            len(self._sids),
+            len(self._artifacts),
+            len(self._spells),
+            len(self._interactables),
+            len(self._resources),
+            len(self._fractions),
+            len(self._content_lists),
+            len(self._content_pools),
+        )
         self.changed.emit()
 
     def _reset(self) -> None:

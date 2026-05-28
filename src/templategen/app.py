@@ -1,5 +1,7 @@
 """Application entry point."""
 
+import logging
+import platform
 import sys
 
 from PySide6.QtWidgets import QApplication
@@ -14,9 +16,17 @@ from templategen.ui.icons import IconRegistry
 from templategen.ui.main_window import MainWindow
 from templategen.ui.theme import apply_theme
 
+_log = logging.getLogger(__name__)
+
 
 def main() -> int:
     configure_logging()
+    _log.info(
+        "templategen %s starting (python %s on %s)",
+        __version__,
+        sys.version.split()[0],
+        platform.platform(),
+    )
 
     app = QApplication(sys.argv)
     # No colon — Windows rejects ':' in path segments, and QStandardPaths /
@@ -35,5 +45,8 @@ def main() -> int:
     catalog = GameDataCatalog()
     window = MainWindow(workspace, icons, catalog, clipboard)
     window.show()
+    _log.info("main window shown — entering event loop")
 
-    return app.exec()
+    rc = app.exec()
+    _log.info("event loop exited with code %d", rc)
+    return rc

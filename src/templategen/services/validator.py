@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from templategen.model.template import Template
+
+_log = logging.getLogger(__name__)
 
 
 class Severity(StrEnum):
@@ -138,4 +141,13 @@ class Validator:
                         )
                     )
 
+        errors = sum(1 for i in issues if i.severity == Severity.ERROR)
+        warnings = sum(1 for i in issues if i.severity == Severity.WARNING)
+        _log.info(
+            "validation: %d issue(s) (%d error, %d warning) across %d variant(s)",
+            len(issues),
+            errors,
+            warnings,
+            len(template.variants),
+        )
         return issues

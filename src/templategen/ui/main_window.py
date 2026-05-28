@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,7 @@ from templategen.ui.asset_icons import sid_listables
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
 from templategen.ui.dialogs.first_run import rebuild_catalog_interactive
+from templategen.ui.dialogs.log_window import LogWindow
 from templategen.ui.dialogs.template_settings import TemplateSettingsDialog
 from templategen.ui.dialogs.validation_results import ValidationResultsDialog
 from templategen.ui.metadata import CHANGELOG, VERSION
@@ -47,6 +49,9 @@ if TYPE_CHECKING:
     from templategen.services.clipboard import EditorClipboard
     from templategen.services.workspace import Document, Workspace
     from templategen.ui.icons import IconRegistry
+
+
+_log = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -63,6 +68,7 @@ class MainWindow(QMainWindow):
         self._catalog = catalog
         self._clipboard = clipboard
         self._tab_for_document: dict[int, _DocumentTab] = {}
+        self._log_window: LogWindow | None = None
         self._current_view: GraphView | None = None
 
         self.setWindowTitle("HoMM:OE Template Editor")
@@ -184,6 +190,10 @@ class MainWindow(QMainWindow):
         self.action_show_explorer = QAction("Show &Catalog Explorer", self)
         self.action_show_explorer.triggered.connect(self._on_show_explorer)
 
+        self.action_show_log = QAction("Show &Log Window", self)
+        self.action_show_log.setShortcut("Ctrl+Shift+L")
+        self.action_show_log.triggered.connect(self._on_show_log)
+
         self.action_show_roads = QAction(self._icons.get("roads"), "Toggle &Road Graph", self)
         self.action_show_roads.setCheckable(True)
         self.action_show_roads.setShortcut("Ctrl+R")
@@ -271,6 +281,7 @@ class MainWindow(QMainWindow):
 
         menu_tools = bar.addMenu("&Tools")
         menu_tools.addAction(self.action_show_explorer)
+        menu_tools.addAction(self.action_show_log)
         menu_tools.addSeparator()
         menu_tools.addAction(self.action_rebuild_catalog)
         menu_tools.addAction(self.action_reload_catalog)
@@ -491,6 +502,7 @@ class MainWindow(QMainWindow):
         try:
             self._workspace.open_document(Path(path))
         except Exception as exc:
+            _log.exception("open_document failed for %s", path)
             QMessageBox.critical(self, "Open failed", f"Could not load template:\n\n{exc}")
 
     def _on_close_current_tab(self) -> None:
@@ -510,6 +522,7 @@ class MainWindow(QMainWindow):
             self._export_template_png(current.session.path)
             self.statusBar().showMessage(f"Saved {current.session.path.name}", 3000)
         except Exception as exc:
+            _log.exception("save failed for %s", current.session.path)
             QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
 
     def _on_save_as(self) -> None:
@@ -533,6 +546,7 @@ class MainWindow(QMainWindow):
             if current_doc is not None:
                 self._refresh_tab_title(current_doc)
         except Exception as exc:
+            _log.exception("save-as failed for %s", path)
             QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
 
     def _export_template_png(self, rmg_path: Path) -> None:
@@ -562,6 +576,7 @@ class MainWindow(QMainWindow):
                 road_node_positions=road_node_positions,
             )
         except (OSError, FileNotFoundError) as exc:
+            _log.exception("PNG export failed for %s", template_png_path(rmg_path))
             self.statusBar().showMessage(f"PNG export failed: {exc}", 4000)
 
     def _confirm_discard_for(self, document: Document) -> bool:
@@ -586,8 +601,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         for doc in self._workspace.documents:
             if not self._confirm_discard_for(doc):
+                _log.info("close cancelled by user (unsaved changes)")
                 event.ignore()
                 return
+        _log.info("main window closing")
         event.accept()
 
     def _on_toggle_place(self, checked: bool) -> None:
@@ -678,6 +695,13 @@ class MainWindow(QMainWindow):
         dock.raise_()
         dock.activateWindow()
 
+    def _on_show_log(self) -> None:
+        if self._log_window is None:
+            self._log_window = LogWindow(self)
+        self._log_window.show()
+        self._log_window.raise_()
+        self._log_window.activateWindow()
+
     def _on_toggle_show_roads(self, on: bool) -> None:
         self.action_show_all_objects.setEnabled(on)
         self.action_add_road.setEnabled(on)
@@ -698,6 +722,7 @@ class MainWindow(QMainWindow):
             self._current_view.set_road_mode(on)
 
     def _on_road_failed(self, message: str) -> None:
+        _log.info("Add Road tool rejected: %s", message)
         self.statusBar().showMessage(f"Add Road: {message}", 5000)
 
     def _on_template_changed(self) -> None:
