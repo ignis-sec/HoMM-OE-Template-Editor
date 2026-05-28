@@ -15,6 +15,8 @@
 
 * Catalog explorer now shows detailed content about artifacts, spells, resources and map objects.
 
+* Added road view mode / road editor, which makes managing road connections much easier.
+
 ## Improvements
 
 * Faction selection fields are now proper dropdowns instead of free fields.
@@ -27,12 +29,20 @@
 
 * Improved UI load times.
 
+* Validation checks will now perform a sanity check for road connections and warn about possible disconnections.
+
+* Content lists can now be renamed.
 
 ## Bugfixes
 
 * Removed empty type option from road types.
 
 * Value overrides tab on template editor is now scrollable and won't cause super long dialog windows that overflow the screen if there are too many overrides.
+
+* Default owner player and object variant is now correctly set as (none) instead of Player1/variant 0.
+
+* Templates with disconnected graphs (tournament ones such as exodus or sprint) will now be autopositioned in a way that doesn't overlap them.
+
 ---
 
 # v0.0.7
