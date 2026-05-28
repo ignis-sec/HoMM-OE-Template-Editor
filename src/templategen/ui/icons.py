@@ -26,6 +26,7 @@ _ICON_MAP: Final[dict[str, str]] = {
     "roads": "fa5s.road",
     "show_all_objects": "fa5s.eye",
     "add_road": "fa5s.route",
+    "reset_road_layout": "fa5s.magic",
 }
 
 

@@ -54,8 +54,12 @@ class GraphView(QGraphicsView):
         self._pending_road_source: ObjectNode | ConnectionNode | None = None
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        # NoAnchor for both — we re-center the view ourselves in wheelEvent so
+        # zoom-out doesn't collapse to "center on scene" once the scene fits in
+        # the viewport. AnchorUnderMouse can't pan past scrollbar limits, which
+        # is what was making zoom drift when zoomed out.
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
@@ -270,8 +274,33 @@ class GraphView(QGraphicsView):
         super().mousePressEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
+        # Qt's setTransformationAnchor(AnchorUnderMouse) only "pans" via the
+        # scrollbars, so it falls back to "center on scene" when the whole
+        # scene fits in the viewport. We do the math ourselves so the cursor
+        # is always the anchor, in or out.
         factor = _ZOOM_STEP if event.angleDelta().y() > 0 else 1.0 / _ZOOM_STEP
+        cursor_viewport = event.position().toPoint()
+        scene_before = self.mapToScene(cursor_viewport)
         self.scale(factor, factor)
+        scene_after = self.mapToScene(cursor_viewport)
+        delta = scene_after - scene_before
+
+        # `view.translate` clamps to the scene rect via the scrollbars. If the
+        # scene rect equals the viewport (in scene coords), scrollbar range is
+        # zero and translate is a no-op. So pad the rect with half-a-viewport
+        # of slack in each direction — scrollbars always have travel room, and
+        # because we only ever GROW the rect (shrinking remaps scrollbar
+        # values mid-event and shifts the view), scrollbars stay meaningful
+        # for the user too.
+        viewport_now = self.mapToScene(self.viewport().rect()).boundingRect()
+        viewport_after = viewport_now.translated(-delta.x(), -delta.y())
+        margin_x = viewport_now.width() / 2
+        margin_y = viewport_now.height() / 2
+        padded = viewport_after.adjusted(-margin_x, -margin_y, margin_x, margin_y)
+        current_rect = self._scene.sceneRect()
+        if not current_rect.contains(padded):
+            self._scene.setSceneRect(current_rect.united(padded))
+        self.translate(delta.x(), delta.y())
 
     def _handle_place_click(self, event: QMouseEvent) -> None:
         variant = self._scene.current_variant

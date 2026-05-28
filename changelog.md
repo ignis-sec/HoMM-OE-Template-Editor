@@ -1,5 +1,20 @@
 # Changelog
 
+# v0.1.1
+
+
+## New Features
+
+* Added an option to rebuild road layout from current zone layout (graph view only)
+
+## Bugfixes
+
+* Crossroads are now displayed correctly in the road editor.
+
+* Fix difficulty navigating via zoom in/out on larger template graphs.
+
+---
+
 # v0.1.0 - Significant Changes
 
 

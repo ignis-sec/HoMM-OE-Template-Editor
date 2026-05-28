@@ -43,6 +43,9 @@ if TYPE_CHECKING:
     from templategen.model.content import Anchor, ContentItem
     from templategen.services.session import EditorSession
 
+# Initial scene rect size. GraphView.wheelEvent grows the rect on demand so the
+# scrollbars stay meaningful (snapped to items + current viewport extent) while
+# still letting "zoom under mouse" work even when content fits in the viewport.
 _SCENE_SIZE: Final[float] = 1200.0
 _LAYOUT_SCALE: Final[float] = 500.0
 _PARALLEL_SPACING: Final[float] = 12.0
@@ -110,6 +113,21 @@ class GraphScene(QGraphicsScene):
         if show == self._show_all_objects:
             return
         self._show_all_objects = show
+        if self._show_roads:
+            self.rebuild()
+
+    def regenerate_road_layout(self) -> None:
+        """Drop every cached road-node position and rebuild, so MainObjects /
+        ContentItems re-fan around their zone positions and ConnectionNodes
+        land at the freshly computed midpoints. Zone positions are preserved.
+
+        We have to clear the per-key item dicts as well as the cache, since the
+        first thing rebuild() does is snapshot live positions back into the
+        cache from those dicts; clearing only the cache would leave the next
+        rebuild reconstructing the same positions it just discarded."""
+        self._road_object_items.clear()
+        self._road_connection_items.clear()
+        self._cached_road_positions.clear()
         if self._show_roads:
             self.rebuild()
 
@@ -370,11 +388,13 @@ class GraphScene(QGraphicsScene):
         )
 
         # For each zone, we render: every MainObject + (optionally) bundle ContentItems
-        # reachable from `zone.mandatoryContent`. In default mode only items actually
-        # referenced by one of the zone's road anchors are shown; with show_all_objects
-        # every named ContentItem from the referenced bundles is drawn.
+        # reachable from `zone.mandatoryContent` + the zone's crossroads when one
+        # is defined. In default mode only items actually referenced by one of the
+        # zone's road anchors are shown; with show_all_objects every named
+        # ContentItem from the referenced bundles is drawn.
         zone_main_nodes: dict[str, list[ObjectNode]] = {}
         zone_content_nodes: dict[str, dict[str, ObjectNode]] = {}
+        zone_crossroads_nodes: dict[str, ObjectNode] = {}
 
         for zone in variant.zones:
             ref_content_names = _content_anchor_refs(zone)
@@ -382,9 +402,9 @@ class GraphScene(QGraphicsScene):
                 zone, bundle_by_name, ref_content_names, self._show_all_objects
             )
 
-            # Each node gets a stable key (`mo:zone:idx`, `ci:zone:name`) so its
-            # position survives rebuilds even when the underlying Python object
-            # is replaced (e.g. after add/remove road).
+            # Each node gets a stable key (`mo:zone:idx`, `ci:zone:name`,
+            # `xr:zone`) so its position survives rebuilds even when the
+            # underlying Python object is replaced (e.g. after add/remove road).
             mo_nodes: list[ObjectNode] = []
             mo_keys: list[str] = []
             for i, mo in enumerate(zone.mainObjects):
@@ -403,8 +423,31 @@ class GraphScene(QGraphicsScene):
                 if item.name is not None:
                     content_nodes[item.name] = node
 
-            all_nodes: list[ObjectNode] = list(mo_nodes) + content_node_list
-            all_keys: list[str | None] = list(mo_keys) + content_node_keys
+            crossroads_nodes: list[ObjectNode] = []
+            crossroads_keys: list[str | None] = []
+            # `crossroadsPosition` is just a position hint — the game accepts
+            # roads using `Crossroads` anchors without it, so we also surface a
+            # crossroads node whenever any road in the zone uses one. With
+            # show_all_objects on we draw one unconditionally so the Add Road
+            # tool can route through a crossroads even in zones that don't have
+            # one yet.
+            needs_crossroads = (
+                zone.crossroadsPosition is not None
+                or self._show_all_objects
+                or any(
+                    a.type == "Crossroads"
+                    for road in (zone.roads or [])
+                    for a in (road.from_, road.to)
+                )
+            )
+            if needs_crossroads:
+                node = _crossroads_node_for(zone)
+                crossroads_nodes.append(node)
+                crossroads_keys.append(_key_for_crossroads(zone.name))
+                zone_crossroads_nodes[zone.name] = node
+
+            all_nodes: list[ObjectNode] = list(mo_nodes) + content_node_list + crossroads_nodes
+            all_keys: list[str | None] = list(mo_keys) + content_node_keys + crossroads_keys
             zone_pos = positions[zone.name]
             for i, (node, key) in enumerate(zip(all_nodes, all_keys, strict=True)):
                 if key is not None and key in self._cached_road_positions:
@@ -446,12 +489,13 @@ class GraphScene(QGraphicsScene):
         for zone in variant.zones:
             mo_nodes = zone_main_nodes.get(zone.name, [])
             content_nodes = zone_content_nodes.get(zone.name, {})
+            crossroads = zone_crossroads_nodes.get(zone.name)
             for road in zone.roads or []:
                 src_node = self._resolve_anchor_node(
-                    road.from_, mo_nodes, content_nodes, connection_nodes
+                    road.from_, mo_nodes, content_nodes, connection_nodes, crossroads
                 )
                 dst_node = self._resolve_anchor_node(
-                    road.to, mo_nodes, content_nodes, connection_nodes
+                    road.to, mo_nodes, content_nodes, connection_nodes, crossroads
                 )
                 if src_node is None or dst_node is None or src_node is dst_node:
                     continue
@@ -464,7 +508,12 @@ class GraphScene(QGraphicsScene):
         mo_nodes: list[ObjectNode],
         content_nodes: dict[str, ObjectNode],
         connection_nodes: dict[str, ConnectionNode],
+        crossroads: ObjectNode | None,
     ) -> ObjectNode | ConnectionNode | None:
+        # Crossroads anchors carry no args — they reference the owning zone's
+        # single crossroads, so we resolve before the args-required check below.
+        if anchor.type == "Crossroads":
+            return crossroads
         if not anchor.args:
             return None
         first = anchor.args[0]
@@ -564,6 +613,10 @@ def _key_for_connection(conn_name: str) -> str:
     return f"conn:{conn_name}"
 
 
+def _key_for_crossroads(zone_name: str) -> str:
+    return f"xr:{zone_name}"
+
+
 _MAIN_OBJECT_TYPES = (
     SpawnObject,
     CityObject,
@@ -610,6 +663,11 @@ def _preferred_zone_order(
 
 def _zones_containing_node(target: object, variant: Variant, template: object) -> set[str]:
     """Return the names of zones in which this model object can act as a road endpoint."""
+    if isinstance(target, Zone):
+        # Crossroads nodes use their owning Zone as model_target. We accept the
+        # target whether or not `crossroadsPosition` is set — the field is just
+        # a placement hint, not a requirement to host crossroads-anchored roads.
+        return {target.name} if any(z is target for z in variant.zones) else set()
     if isinstance(target, _MAIN_OBJECT_TYPES):
         return {zone.name for zone in variant.zones if any(mo is target for mo in zone.mainObjects)}
     if isinstance(target, _CONNECTION_TYPES):
@@ -635,6 +693,10 @@ def _anchor_for_in_zone(
     template: object,
     pending_names: dict[int, str] | None = None,
 ) -> AnchorRuntime | None:
+    if isinstance(target, Zone):
+        if target is zone:
+            return AnchorRuntime(type="Crossroads", args=[])
+        return None
     if isinstance(target, _MAIN_OBJECT_TYPES):
         for i, mo in enumerate(zone.mainObjects):
             if mo is target:
@@ -762,6 +824,24 @@ def _object_node_for(mo: object, zone: Zone, index: int) -> ObjectNode:
     glyph = "A" if kind == MainObjectType.ABANDONED_OUTPOST.value else "?"
     return ObjectNode(mo, f"{label_prefix} — {kind}",
                       fill=QColor("#5a4a2a"), glyph=glyph, owning_zone_name=owner)
+
+
+def _crossroads_node_for(zone: Zone) -> ObjectNode:
+    """Single per-zone "crossroads" anchor node. Road anchors of type
+    `Crossroads` carry no args — they implicitly reference the owning zone's
+    crossroads — so we render one node per zone whose `crossroadsPosition` is
+    set. Its model_target is the Zone itself, so selecting it shows the zone's
+    settings (including the `crossroadsPosition` field) in the inspector."""
+    from PySide6.QtGui import QColor
+
+    label = f"'{zone.name}' / Crossroads (position {zone.crossroadsPosition})"
+    return ObjectNode(
+        zone,
+        label,
+        fill=QColor("#3a3a4a"),
+        glyph="✕",
+        owning_zone_name=zone.name,
+    )
 
 
 def _faction_icon(mo: CityObject) -> QIcon | None:
