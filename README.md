@@ -71,6 +71,12 @@ Linux:
 
 Windows:
 ```
+C:\\Users\\%USERNAME%\\AppData\\LocalLow\\Unfrozen\\HeroesOE\\my templates\\
+
+Or possibly:
+C:\\Users\\%USERNAME%\\AppData\\LocalLow\\Unfrozen\\HeroesOldenEra\\users\\[Your Steam ID]\\my_map_templates\\
+
+Or maybe:
 C:\\Program Files (x86)\\Steam\\steamapps\\common\\Heroes of Might & Magic Olden Era\\HeroesOldenEra_Data\\StreamingAssets\\map_templates\\user
 ```
 
