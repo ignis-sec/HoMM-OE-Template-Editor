@@ -1,7 +1,13 @@
 
-VERSION = "v0.1.1"
+VERSION = "v0.1.2"
 CHANGELOG = """
 <h1 id="changelog">Changelog</h1>
+<h1 id="v0-1-2">v0.1.2</h1>
+<h2 id="bugfixes">Bugfixes</h2>
+<ul>
+<li>Default value for &quot;Faction laws exp modifier&quot; and &quot;Astrology exp modifier&quot; in template settings is now 1.0 (the neutral multiplier) instead of 0.0, so a newly opened template with no overrides shows the correct baseline.</li>
+</ul>
+<hr>
 <h1 id="v0-1-1">v0.1.1</h1>
 <h2 id="new-features">New Features</h2>
 <ul>

@@ -1,5 +1,14 @@
 # Changelog
 
+# v0.1.2
+
+## Bugfixes
+
+
+* Default value for "Faction laws exp modifier" and "Astrology exp modifier" in template settings is now 1.0 (the neutral multiplier) instead of 0.0, so a newly opened template with no overrides shows the correct baseline.
+
+---
+
 # v0.1.1
 
 

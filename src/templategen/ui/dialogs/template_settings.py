@@ -109,8 +109,14 @@ class TemplateSettingsDialog(QDialog):
         form.addRow("Hero count increment:", self._track_int(rules, "heroCountIncrement", 0, 32))
         form.addRow("Hero hire ban:", self._track_bool(rules, "heroHireBan"))
         form.addRow("Encounter holes:", self._track_bool(rules, "encounterHoles"))
-        form.addRow("Faction laws exp modifier:", self._track_float(rules, "factionLawsExpModifier", 0.0, 10.0, 0.05))
-        form.addRow("Astrology exp modifier:", self._track_float(rules, "astrologyExpModifier", 0.0, 10.0, 0.05))
+        form.addRow(
+            "Faction laws exp modifier:",
+            self._track_float(rules, "factionLawsExpModifier", 0.0, 10.0, 0.05, unset_display=1.0),
+        )
+        form.addRow(
+            "Astrology exp modifier:",
+            self._track_float(rules, "astrologyExpModifier", 0.0, 10.0, 0.05, unset_display=1.0),
+        )
         form.addRow("Champion select rule:", self._track_line(rules, "championSelectRule", placeholder=""))
 
         return widget
@@ -208,13 +214,14 @@ class TemplateSettingsDialog(QDialog):
         minimum: float,
         maximum: float,
         step: float,
+        unset_display: float = 0.0,
     ) -> QDoubleSpinBox:
         widget = QDoubleSpinBox()
         widget.setRange(minimum, maximum)
         widget.setSingleStep(step)
         widget.setDecimals(3)
         current = getattr(target, name)
-        widget.setValue(float(current) if current is not None else 0.0)
+        widget.setValue(float(current) if current is not None else unset_display)
         self._fields.append(_Field(target, name, widget.value))
         return widget
 
