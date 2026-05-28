@@ -39,6 +39,10 @@ class ZoneItem(QGraphicsObject):
     def model_target(self) -> Zone:
         return self._zone
 
+    @property
+    def radius(self) -> float:
+        return self._radius
+
     def refresh(self) -> None:
         self.setToolTip(self._zone.name)
         self.update()

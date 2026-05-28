@@ -55,12 +55,24 @@ from templategen.model.main_objects import (
 )
 from templategen.model.selectors import BiomeSelector, FactionSelector
 from templategen.model.zone import EncounterHolesSettings, Road, Zone
-from templategen.services.commands import ChangeConnectionTypeCommand
+from templategen.services.commands import (
+    ChangeConnectionTypeCommand,
+    EditFieldCommand,
+    RenameContentItemCommand,
+    UnsetFieldCommand,
+)
+from templategen.ui.asset_icons import (
+    content_sid_listables,
+    fraction_listables,
+    sid_listable,
+    sid_listables,
+)
 from templategen.ui.widgets.field_binding import (
     bind_bool,
     bind_choice,
     bind_float,
     bind_int,
+    bind_int_optional,
     bind_string,
 )
 from templategen.ui.widgets.list_editors import (
@@ -74,9 +86,12 @@ from templategen.ui.widgets.sub_object_form import LazySubObjectGroup
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from PySide6.QtGui import QIcon
+
     from templategen.catalog.game_data import GameDataCatalog
     from templategen.services.workspace import Workspace
     from templategen.ui.widgets.field_binding import Refresh
+    from templategen.ui.widgets.listable import ListableItem
 
 
 _PLAYER_VALUES = [p.value for p in PlayerId]
@@ -84,6 +99,9 @@ _PLACEMENT_VALUES = [p.value for p in Placement]
 _BIOME_TYPES = ["FromList", "Match", "MatchMainObject", "MatchZone"]
 _FACTION_TYPES = ["FromList", "Match"]
 _ANCHOR_TYPES = ["MainObject", "Connection", "Crossroads", "Road", "Sid", "MandatoryContent"]
+
+_INPUT_MIN_WIDTH = 80
+_NUMERIC_MIN_WIDTH = 64
 
 _CONNECTION_CLASS_BY_TYPE: dict[ConnectionType, type[_ConnectionBase]] = {
     ConnectionType.DIRECT: DirectConnection,
@@ -115,7 +133,7 @@ class Inspector(QWidget):
         self._view_stack: list[object] = []
         self._refreshers: list[Refresh] = []
 
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(240)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
@@ -427,8 +445,8 @@ class Inspector(QWidget):
                 choices=self._catalog.known_building_constructions,
             ),
         )
-        misc.addRow("Owner:", self._combo(mo, "owner", _PLAYER_VALUES))
-        misc.addRow("Factions:", self._scalar_list(mo, "factions"))
+        misc.addRow("Owner:", self._optional_combo(mo, "owner", _PLAYER_VALUES))
+        misc.addRow("Factions:", self._fraction_list(mo, "factions"))
         misc.addRow("Is key object:", self._check(mo, "isKeyObject"))
         misc.addRow("Hold city win con:", self._check(mo, "holdCityWinCon"))
         misc.addRow("Enable weekly unit inc:", self._check(mo, "enableWeeklyUnitIncrement"))
@@ -445,9 +463,12 @@ class Inspector(QWidget):
     def _populate_content_item(self, item: ContentItem) -> None:
         form = self._section()
         form.addRow("Kind:", _readonly("Content Item"))
-        form.addRow("Sid:", self._sid_picker(item, "sid"))
-        form.addRow("Variant:", self._int(item, "variant", -1, 100_000, 1))
-        form.addRow("Name:", self._line(item, "name", optional=True))
+        form.addRow(
+            "Sid:",
+            self._sid_picker(item, "sid", choices=lambda: content_sid_listables(self._catalog)),
+        )
+        form.addRow("Variant:", self._optional_int(item, "variant", -1, 100_000, 1))
+        form.addRow("Name:", self._content_item_name_field(item))
 
         flags = self._section("Flags")
         flags.addRow("Is mine:", self._check(item, "isMine"))
@@ -457,7 +478,7 @@ class Inspector(QWidget):
         flags.addRow("Road:", self._check(item, "road"))
 
         owner_section = self._section("Owner / Guard")
-        owner_section.addRow("Owner:", self._combo(item, "owner", _PLAYER_VALUES))
+        owner_section.addRow("Owner:", self._optional_combo(item, "owner", _PLAYER_VALUES))
         owner_section.addRow("Guard value:", self._int(item, "guardValue", 0, 1_000_000_000, 1000))
 
         lists = self._section("Reference lists")
@@ -472,8 +493,11 @@ class Inspector(QWidget):
     def _populate_limit_item(self, item: LimitItem) -> None:
         form = self._section()
         form.addRow("Kind:", _readonly("Limit Item"))
-        form.addRow("Sid:", self._sid_picker(item, "sid"))
-        form.addRow("Variant:", self._int(item, "variant", -1, 100_000, 1))
+        form.addRow(
+            "Sid:",
+            self._sid_picker(item, "sid", choices=lambda: content_sid_listables(self._catalog)),
+        )
+        form.addRow("Variant:", self._optional_int(item, "variant", -1, 100_000, 1))
         form.addRow("Max count:", self._int(item, "maxCount", 0, 1_000_000, 1))
 
         lists = self._section("Reference lists")
@@ -498,7 +522,7 @@ class Inspector(QWidget):
     def _populate_road(self, road: Road) -> None:
         form = self._section()
         form.addRow("Kind:", _readonly("Road"))
-        road_types = ["", "Stone", "Dirt"]
+        road_types = [t.value for t in RoadType]
         form.addRow("Type:", self._combo(road, "type", road_types))
 
         self._add_sub_group(
@@ -541,15 +565,45 @@ class Inspector(QWidget):
     ) -> None:
         combo = QComboBox()
         refreshers.append(bind_choice(combo, selector, "type", self._session, _BIOME_TYPES))
+        # Args editor depends on the type; re-render via QTimer so we don't delete
+        # the combo from inside its own activated handler.
+        combo.activated.connect(lambda _idx: QTimer.singleShot(0, self._render_current))
         form.addRow("Type:", combo)
 
-        biomes = list(self._catalog.known_biomes())
-        if biomes:
-            args = ReferenceListEditor(selector, "args", self._session, choices=self._catalog.known_biomes)
+        args: QWidget
+        if selector.type == "FromList":
+            biomes = list(self._catalog.known_biomes())
+            if biomes:
+                args = ReferenceListEditor(
+                    selector, "args", self._session, choices=self._catalog.known_biomes,
+                )
+            else:
+                args = ScalarListEditor(selector, "args", self._session)
+        elif selector.type in {"MatchZone", "Match"}:
+            zone_names = self._known_zone_names()
+            args = ReferenceListEditor(
+                selector, "args", self._session, choices=lambda: zone_names,
+            )
+        elif selector.type == "MatchMainObject":
+            args = ScalarListEditor(selector, "args", self._session, item_type=int)
         else:
             args = ScalarListEditor(selector, "args", self._session)
         refreshers.append(args.refresh)
         form.addRow("Args:", args)
+
+    def _known_zone_names(self) -> list[str]:
+        template = self._session.template
+        if template is None:
+            return []
+        names: list[str] = []
+        seen: set[str] = set()
+        for variant in template.variants:
+            for zone in variant.zones:
+                if zone.name and zone.name not in seen:
+                    seen.add(zone.name)
+                    names.append(zone.name)
+        names.sort(key=str.casefold)
+        return names
 
     def _populate_faction_selector(
         self,
@@ -580,6 +634,7 @@ class Inspector(QWidget):
         combo.activated.connect(lambda _idx: QTimer.singleShot(0, self._render_current))
         form.addRow("Type:", combo)
 
+        args: QWidget
         if anchor.type == "Connection":
             zone, variant = self._zone_for_anchor(anchor)
             if zone is not None and variant is not None:
@@ -587,15 +642,28 @@ class Inspector(QWidget):
                     c.name for c in variant.connections
                     if c.name and (c.from_ == zone.name or c.to == zone.name)
                 ]
-                args: QWidget = ReferenceListEditor(
-                    anchor, "args", self._session, choices=lambda names=conn_names: names
+                args = ReferenceListEditor(
+                    anchor, "args", self._session, choices=lambda names=conn_names: names,
                 )
             else:
                 args = ScalarListEditor(anchor, "args", self._session)
+        elif anchor.type == "MainObject":
+            args = ScalarListEditor(anchor, "args", self._session, item_type=int)
+        elif anchor.type == "MandatoryContent":
+            bundle_names = self._known_bundle_names()
+            args = ReferenceListEditor(
+                anchor, "args", self._session, choices=lambda names=bundle_names: names,
+            )
         else:
             args = ScalarListEditor(anchor, "args", self._session)
         refreshers.append(args.refresh)
         form.addRow("Args:", args)
+
+    def _known_bundle_names(self) -> list[str]:
+        template = self._session.template
+        if template is None:
+            return []
+        return [b.name for b in template.mandatoryContent if isinstance(b.name, str)]
 
     def _zone_for_anchor(self, anchor: Anchor) -> tuple[Zone | None, object | None]:
         template = self._session.template
@@ -738,12 +806,16 @@ class Inspector(QWidget):
         def summary(item: object) -> str:
             assert isinstance(item, ContentItem)
             if item.sid:
-                tail = f" (sid={item.sid})"
-            elif item.includeLists:
-                tail = f" (lists={','.join(item.includeLists)})"
-            else:
-                tail = ""
-            return f"ContentItem{tail}"
+                listable = sid_listable(self._catalog, item.sid)
+                return listable.display
+            if item.includeLists:
+                return f"via includeLists: {', '.join(item.includeLists)}"
+            return "(unset)"
+
+        def icon_for(item: object) -> QIcon | None:
+            if isinstance(item, ContentItem) and item.sid:
+                return sid_listable(self._catalog, item.sid).icon
+            return None
 
         return SubObjectListEditor(
             target,
@@ -752,6 +824,7 @@ class Inspector(QWidget):
             factories=factories,
             summary=summary,
             on_drill_in=self.drill_in,
+            icon_for=icon_for,
         )
 
     def _limit_item_list(self, target: object, field: str) -> SubObjectListEditor:
@@ -761,8 +834,18 @@ class Inspector(QWidget):
 
         def summary(item: object) -> str:
             assert isinstance(item, LimitItem)
-            head = item.sid or ("via includeLists" if item.includeLists else "(no sid)")
-            return f"{head} (max={item.maxCount})"
+            if item.sid:
+                head = sid_listable(self._catalog, item.sid).display
+            elif item.includeLists:
+                head = f"via includeLists: {', '.join(item.includeLists)}"
+            else:
+                head = "(no sid)"
+            return f"{head}  · max={item.maxCount}"
+
+        def icon_for(item: object) -> QIcon | None:
+            if isinstance(item, LimitItem) and item.sid:
+                return sid_listable(self._catalog, item.sid).icon
+            return None
 
         return SubObjectListEditor(
             target,
@@ -771,6 +854,7 @@ class Inspector(QWidget):
             factories=factories,
             summary=summary,
             on_drill_in=self.drill_in,
+            icon_for=icon_for,
         )
 
     def _placement_rule_list(self, target: object, field: str) -> SubObjectListEditor:
@@ -813,14 +897,72 @@ class Inspector(QWidget):
 
     def _line(self, target: object, field: str, *, optional: bool = False) -> QLineEdit:
         widget = QLineEdit()
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
         self._refreshers.append(bind_string(widget, target, field, self._session, optional=optional))
+        return widget
+
+    def _content_item_name_field(self, item: ContentItem) -> QLineEdit:
+        """ContentItem name editor — routes renames through RenameContentItemCommand
+        so any MandatoryContent road anchors that reference the old name follow
+        the change in a single undo step. Clearing the name uses UnsetFieldCommand,
+        which leaves dangling anchors for the validator to flag rather than
+        silently breaking unrelated roads."""
+        widget = QLineEdit()
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
+        widget.setText(item.name or "")
+
+        def on_commit() -> None:
+            text = widget.text().strip()
+            new = text or None
+            old = item.name
+            if new == old:
+                return
+            template = self._session.template
+            if new is None:
+                if old is not None or "name" in item.__pydantic_fields_set__:
+                    self._session.execute(
+                        UnsetFieldCommand(self._session, item, "name")
+                    )
+                return
+            if template is None:
+                self._session.execute(EditFieldCommand(self._session, item, "name", new))
+                return
+            self._session.execute(
+                RenameContentItemCommand(self._session, template, item, new)
+            )
+
+        def refresh() -> None:
+            text = item.name or ""
+            if widget.text() != text:
+                widget.setText(text)
+
+        widget.editingFinished.connect(on_commit)
+        self._refreshers.append(refresh)
         return widget
 
     def _int(self, target: object, field: str, minimum: int, maximum: int, step: int) -> QSpinBox:
         widget = QSpinBox()
         widget.setRange(minimum, maximum)
         widget.setSingleStep(step)
+        widget.setMinimumWidth(_NUMERIC_MIN_WIDTH)
         self._refreshers.append(bind_int(widget, target, field, self._session))
+        return widget
+
+    def _optional_int(
+        self, target: object, field: str, minimum: int, maximum: int, step: int
+    ) -> QSpinBox:
+        """Integer spinbox with a leading "(none)" sentinel that clears the field
+        via UnsetFieldCommand. Scrolling below `minimum` reveals "(none)"; the
+        spinbox shows "(none)" whenever the model's field is unset/None."""
+        sentinel = minimum - 1
+        widget = QSpinBox()
+        widget.setRange(sentinel, maximum)
+        widget.setSingleStep(step)
+        widget.setSpecialValueText("(none)")
+        widget.setMinimumWidth(_NUMERIC_MIN_WIDTH)
+        self._refreshers.append(
+            bind_int_optional(widget, target, field, self._session, sentinel=sentinel)
+        )
         return widget
 
     def _double(
@@ -837,6 +979,7 @@ class Inspector(QWidget):
         widget.setRange(minimum, maximum)
         widget.setSingleStep(step)
         widget.setDecimals(decimals)
+        widget.setMinimumWidth(_NUMERIC_MIN_WIDTH)
         self._refreshers.append(bind_float(widget, target, field, self._session))
         return widget
 
@@ -847,11 +990,54 @@ class Inspector(QWidget):
 
     def _combo(self, target: object, field: str, choices: list[str]) -> QComboBox:
         widget = QComboBox()
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
         self._refreshers.append(bind_choice(widget, target, field, self._session, choices))
         return widget
 
-    def _sid_picker(self, target: object, field: str) -> SidPicker:
-        widget = SidPicker(target, field, self._session, choices=self._catalog.known_sids)
+    def _optional_combo(self, target: object, field: str, choices: list[str]) -> QComboBox:
+        """Combo with a leading "(none)" entry that clears the field via UnsetFieldCommand,
+        so the writer (exclude_unset=True) omits it from the dumped JSON."""
+        sentinel = "(none)"
+        widget = QComboBox()
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
+        widget.addItem(sentinel)
+        widget.addItems(choices)
+
+        def select_current() -> None:
+            current = getattr(target, field)
+            text = sentinel if current is None else str(current)
+            idx = widget.findText(text)
+            widget.blockSignals(True)
+            widget.setCurrentIndex(idx if idx >= 0 else 0)
+            widget.blockSignals(False)
+
+        select_current()
+
+        def on_commit(_index: int) -> None:
+            picked = widget.currentText()
+            current = getattr(target, field)
+            if picked == sentinel:
+                if current is not None or field in target.__pydantic_fields_set__:
+                    self._session.execute(UnsetFieldCommand(self._session, target, field))
+            else:
+                if picked != current:
+                    self._session.execute(EditFieldCommand(self._session, target, field, picked))
+
+        widget.activated.connect(on_commit)
+        self._refreshers.append(select_current)
+        return widget
+
+    def _sid_picker(
+        self,
+        target: object,
+        field: str,
+        *,
+        choices: Callable[[], list[ListableItem]] | None = None,
+    ) -> SidPicker:
+        if choices is None:
+            choices = lambda: sid_listables(self._catalog, list(self._catalog.known_sids()))  # noqa: E731
+        widget = SidPicker(target, field, self._session, choices=choices)
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
         self._refreshers.append(widget.refresh)
         return widget
 
@@ -922,6 +1108,11 @@ class Inspector(QWidget):
         )
         self._refreshers.append(widget.refresh)
         return widget
+
+    def _fraction_list(self, target: object, field: str) -> ReferenceListEditor:
+        return self._reference_list(
+            target, field, choices=lambda: fraction_listables(self._catalog),
+        )
 
     def _add_sub_group(
         self,

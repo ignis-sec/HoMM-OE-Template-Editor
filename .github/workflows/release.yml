@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
-    branches: [prerelease]
+    branches: [pre-release]
 
 permissions:
   contents: write
@@ -13,8 +13,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  resolve-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+      is_prerelease: ${{ steps.tag.outputs.is_prerelease }}
+    steps:
+      - id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "branch" ]; then
+            # Unique per-commit tag so each prerelease is a distinct release.
+            echo "release_tag=prerelease-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-windows:
+    needs: [resolve-tag]
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,6 +67,21 @@ jobs:
       - name: Build Windows executable
         shell: pwsh
         run: |
+          # UnityPy lazily imports its native texture decoders, audio helpers,
+          # and Pillow's plugins. PyInstaller's static analysis misses all of
+          # these with just --collect-all UnityPy, so we collect each chain
+          # explicitly. Without them, catalog metadata reads fine but every
+          # texture decode raises and no icons get saved:
+          #   - texture2ddecoder : BC7/DXT decoders
+          #   - etcpak           : ETC/ETC2 decoders
+          #   - astc_encoder_py  : ASTC decoder
+          #   - astc_encoder     : its pure-Python wrapper which pulls in archspec
+          #   - archspec         : ships CPU-feature JSON tables as package data
+          #   - fmod_toolkit     : bundled fmod.dll (Texture2D reads route
+          #                        through the same asset loader that touches
+          #                        audio support, so the FMOD native lib must
+          #                        be present even though we never decode audio)
+          #   - PIL              : PNG / image plugins for image.save(...)
           pyinstaller `
             --name "HoMM OE Template Editor" `
             --onefile `
@@ -53,8 +89,15 @@ jobs:
             --noconfirm `
             --log-level INFO `
             --add-data "src/templategen/img;templategen/img" `
-            --add-data "data/catalog.json;data" `
             --collect-submodules templategen `
+            --collect-all UnityPy `
+            --collect-all texture2ddecoder `
+            --collect-all etcpak `
+            --collect-all astc_encoder_py `
+            --collect-all astc_encoder `
+            --collect-all archspec `
+            --collect-all fmod_toolkit `
+            --collect-all PIL `
             launch.py
 
       - name: Inspect build output
@@ -67,51 +110,41 @@ jobs:
           Write-Host ("exe size: {0:N1} MB" -f $size)
           if ($size -lt 30) { throw "exe is only ${size}MB — PySide6 was not bundled" }
 
-      - name: Stage release folder (exe + data + img)
+      - name: Rename exe with release tag (catalog + icons are built from the user's
+              game install on first launch, so the bare exe is the whole release)
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          $stage = "release-staging/HoMM OE Template Editor-$tag-windows"
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          New-Item -ItemType Directory -Force -Path "$stage/data" | Out-Null
-          New-Item -ItemType Directory -Force -Path "$stage/img" | Out-Null
-          Move-Item "dist/HoMM OE Template Editor.exe" "$stage/HoMM OE Template Editor.exe"
-          Copy-Item "data/catalog.json" "$stage/data/catalog.json"
-          Copy-Item -Recurse "src/templategen/img/*" "$stage/img/"
-          Get-ChildItem $stage -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+          $tag = $env:RELEASE_TAG
+          $src = "dist/HoMM OE Template Editor.exe"
+          $dst = "dist/HoMM OE Template Editor-$tag-windows.exe"
+          Move-Item $src $dst
+          Get-ChildItem dist | Select-Object Name, Length | Format-Table -AutoSize
 
-      - name: Zip release folder
+      - name: Log SHA-256 of the release exe
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          $folder = "release-staging/HoMM OE Template Editor-$tag-windows"
-          $zip = "dist/HoMM OE Template Editor-$tag-windows.zip"
-          Compress-Archive -Path $folder -DestinationPath $zip
-          Write-Host "Zipped to $zip"
+          $tag = $env:RELEASE_TAG
+          $exe = "dist/HoMM OE Template Editor-$tag-windows.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          Write-Host "SHA-256 ($((Split-Path $exe -Leaf))): $hash"
 
-      - name: Log SHA-256 of the release zip
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          $zip = "dist/HoMM OE Template Editor-$tag-windows.zip"
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          Write-Host "SHA-256 ($((Split-Path $zip -Leaf))): $hash"
-
-      - name: Upload Windows release zip
+      - name: Upload Windows release exe
         uses: actions/upload-artifact@v4
         with:
           name: homm-oe-template-editor-windows
-          path: dist/HoMM OE Template Editor-*-windows.zip
+          path: dist/HoMM OE Template Editor-*-windows.exe
 
   package-source:
+    needs: [resolve-tag]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Build source archive
         run: |
-          tag="${GITHUB_REF_NAME}"
-          git archive --format=zip --prefix="HoMM OE Template Editor-${tag}/" -o "HoMM OE Template Editor-${tag}-source.zip" HEAD
+          git archive --format=zip --prefix="HoMM OE Template Editor-${RELEASE_TAG}/" -o "HoMM OE Template Editor-${RELEASE_TAG}-source.zip" HEAD
 
       - name: Upload source archive
         uses: actions/upload-artifact@v4
@@ -120,9 +153,15 @@ jobs:
           path: HoMM OE Template Editor-*-source.zip
 
   release:
-    needs: [build-windows, package-source]
+    needs: [resolve-tag, build-windows, package-source]
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+      IS_PRERELEASE: ${{ needs.resolve-tag.outputs.is_prerelease }}
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: homm-oe-template-editor-windows
@@ -133,17 +172,30 @@ jobs:
           name: homm-oe-template-editor-source
           path: dist
 
+      - name: Sweep stale prereleases (keep only the one we're about to publish)
+        if: env.IS_PRERELEASE == 'true'
+        shell: bash
+        run: |
+          # Remove any release/tag starting with "prerelease" except the current target.
+          # Catches the legacy bare "prerelease" tag too, plus any older prerelease-<sha>.
+          gh release list --limit 100 --json tagName \
+            | jq -r '.[] | .tagName' \
+            | grep -E '^prerelease(-|$)' \
+            | grep -vx "$RELEASE_TAG" \
+            | while read -r tag; do
+                echo "Deleting stale prerelease: $tag"
+                gh release delete "$tag" --yes --cleanup-tag || true
+              done
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          # Branch pushes use the fixed "prerelease" tag (replaces previous prerelease);
-          # tag pushes use the tag name itself (e.g. v0.0.7).
-          tag_name: ${{ github.ref_type == 'branch' && 'prerelease' || github.ref_name }}
-          name: ${{ github.ref_type == 'branch' && format('Prerelease ({0})', github.sha) || github.ref_name }}
-          prerelease: ${{ github.ref_type == 'branch' }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.IS_PRERELEASE == 'true' && format('Prerelease ({0})', env.RELEASE_TAG) || env.RELEASE_TAG }}
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           target_commitish: ${{ github.sha }}
           files: |
-            dist/HoMM OE Template Editor-*-windows.zip
+            dist/HoMM OE Template Editor-*-windows.exe
             dist/HoMM OE Template Editor-*-source.zip
           generate_release_notes: true
           fail_on_unmatched_files: true

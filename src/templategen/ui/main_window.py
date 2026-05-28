@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDockWidget,
     QFileDialog,
+    QFormLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -23,14 +26,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from templategen.catalog.builder import CatalogBuildError, build_snapshot, write_snapshot
 from templategen.io.template_image import render_template_png, template_png_path
 from templategen.model.enums import OrientationMode
 from templategen.model.variant import Orientation, Variant
 from templategen.services.commands import AddVariantCommand, RemoveVariantCommand
 from templategen.services.validator import Validator
+from templategen.ui.asset_icons import sid_listables
 from templategen.ui.canvas.graph_scene import GraphScene
 from templategen.ui.canvas.graph_view import GraphView
+from templategen.ui.dialogs.first_run import rebuild_catalog_interactive
+from templategen.ui.dialogs.log_window import LogWindow
 from templategen.ui.dialogs.template_settings import TemplateSettingsDialog
 from templategen.ui.dialogs.validation_results import ValidationResultsDialog
 from templategen.ui.metadata import CHANGELOG, VERSION
@@ -44,6 +49,9 @@ if TYPE_CHECKING:
     from templategen.services.clipboard import EditorClipboard
     from templategen.services.workspace import Document, Workspace
     from templategen.ui.icons import IconRegistry
+
+
+_log = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -60,6 +68,7 @@ class MainWindow(QMainWindow):
         self._catalog = catalog
         self._clipboard = clipboard
         self._tab_for_document: dict[int, _DocumentTab] = {}
+        self._log_window: LogWindow | None = None
         self._current_view: GraphView | None = None
 
         self.setWindowTitle("HoMM:OE Template Editor")
@@ -86,6 +95,32 @@ class MainWindow(QMainWindow):
         self._update_canvas_actions_enabled(False)
         self._update_title()
         self._update_variant_label()
+
+        # qdarktheme's stylesheet makes the first combo-with-icons addRow cost
+        # ~500 ms (Qt polishes every icon). Pay that cost offscreen right after
+        # the main window paints, so the first Template Settings dialog opens
+        # without the freeze.
+        self._icon_polish_warmer: QWidget | None = None
+        QTimer.singleShot(0, self._prewarm_icon_polish)
+
+    def _prewarm_icon_polish(self) -> None:
+        if not self._catalog.is_loaded():
+            return
+        items = sid_listables(self._catalog, list(self._catalog.known_sids()))
+        if not any(i.icon is not None for i in items):
+            return
+        host = QWidget()
+        form = QFormLayout(host)
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setIconSize(QSize(24, 24))
+        for it in items:
+            if it.icon is not None:
+                combo.addItem(it.icon, it.display, it.value)
+            else:
+                combo.addItem(it.display, it.value)
+        form.addRow("warm", combo)
+        self._icon_polish_warmer = host
 
     def _build_actions(self) -> None:
         self.action_new = QAction(self._icons.get("new"), "&New Template", self)
@@ -146,7 +181,7 @@ class MainWindow(QMainWindow):
         self.action_template_settings = QAction(self._icons.get("settings"), "Template &Settings…", self)
         self.action_template_settings.triggered.connect(self._on_template_settings)
 
-        self.action_rebuild_catalog = QAction("&Rebuild Catalog from game-data…", self)
+        self.action_rebuild_catalog = QAction("&Rebuild Catalog from game install…", self)
         self.action_rebuild_catalog.triggered.connect(self._on_rebuild_catalog)
 
         self.action_reload_catalog = QAction("Re&load Catalog snapshot", self)
@@ -154,6 +189,37 @@ class MainWindow(QMainWindow):
 
         self.action_show_explorer = QAction("Show &Catalog Explorer", self)
         self.action_show_explorer.triggered.connect(self._on_show_explorer)
+
+        self.action_show_log = QAction("Show &Log Window", self)
+        self.action_show_log.setShortcut("Ctrl+Shift+L")
+        self.action_show_log.triggered.connect(self._on_show_log)
+
+        self.action_show_roads = QAction(self._icons.get("roads"), "Toggle &Road Graph", self)
+        self.action_show_roads.setCheckable(True)
+        self.action_show_roads.setShortcut("Ctrl+R")
+        self.action_show_roads.setToolTip("Toggle road graph view (Ctrl+R)")
+        self.action_show_roads.toggled.connect(self._on_toggle_show_roads)
+
+        self.action_show_all_objects = QAction(
+            self._icons.get("show_all_objects"), "Show All Bundle &Objects", self
+        )
+        self.action_show_all_objects.setCheckable(True)
+        self.action_show_all_objects.setShortcut("Ctrl+Shift+R")
+        self.action_show_all_objects.setEnabled(False)
+        self.action_show_all_objects.setToolTip(
+            "In road graph view, also draw bundle ContentItems that no road points at yet "
+            "(Ctrl+Shift+R)"
+        )
+        self.action_show_all_objects.toggled.connect(self._on_toggle_show_all_objects)
+
+        self.action_add_road = QAction(self._icons.get("add_road"), "&Add Road", self)
+        self.action_add_road.setCheckable(True)
+        self.action_add_road.setShortcut("Ctrl+Alt+R")
+        self.action_add_road.setEnabled(False)
+        self.action_add_road.setToolTip(
+            "Click two nodes in the road graph to create the connecting road(s) (Ctrl+Alt+R)"
+        )
+        self.action_add_road.toggled.connect(self._on_toggle_add_road)
 
         self.action_about = QAction(self._icons.get("about"), "&About HoMM:OE Template Editor", self)
         self.action_about.triggered.connect(self._show_about)
@@ -215,6 +281,7 @@ class MainWindow(QMainWindow):
 
         menu_tools = bar.addMenu("&Tools")
         menu_tools.addAction(self.action_show_explorer)
+        menu_tools.addAction(self.action_show_log)
         menu_tools.addSeparator()
         menu_tools.addAction(self.action_rebuild_catalog)
         menu_tools.addAction(self.action_reload_catalog)
@@ -241,6 +308,9 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.action_delete)
         toolbar.addSeparator()
         toolbar.addAction(self.action_validate)
+        toolbar.addAction(self.action_show_roads)
+        toolbar.addAction(self.action_show_all_objects)
+        toolbar.addAction(self.action_add_road)
 
     def _build_docks(self) -> None:
         self._library_dock = self._make_dock(
@@ -253,6 +323,18 @@ class MainWindow(QMainWindow):
             Inspector(self._workspace, self._catalog),
             Qt.DockWidgetArea.RightDockWidgetArea,
         )
+        # The catalog explorer is expensive to construct (~1.5 s of Qt layout work for
+        # the ~1800 list-widget items across all eight tabs). It's hidden by default, so
+        # we build it lazily the first time the user opens it — keeps startup snappy.
+        self._explorer: CatalogExplorer | None = None
+        self._explorer_dock: QDockWidget | None = None
+
+        self.menu_view.addAction(self._library_dock.toggleViewAction())
+        self.menu_view.addAction(self._inspector_dock.toggleViewAction())
+
+    def _ensure_explorer_dock(self) -> QDockWidget:
+        if self._explorer_dock is not None and self._explorer is not None:
+            return self._explorer_dock
         self._explorer = CatalogExplorer(self._catalog)
         self._explorer_dock = self._make_dock(
             "Catalog Explorer",
@@ -260,11 +342,8 @@ class MainWindow(QMainWindow):
             Qt.DockWidgetArea.BottomDockWidgetArea,
             allowed_areas=Qt.DockWidgetArea.AllDockWidgetAreas,
         )
-        self._explorer_dock.setVisible(False)
-
-        self.menu_view.addAction(self._library_dock.toggleViewAction())
-        self.menu_view.addAction(self._inspector_dock.toggleViewAction())
         self.menu_view.addAction(self._explorer_dock.toggleViewAction())
+        return self._explorer_dock
 
     def _make_dock(
         self,
@@ -289,8 +368,10 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self._variant_label)
 
     def _on_document_added(self, document: Document) -> None:
-        tab = _DocumentTab(document)
+        tab = _DocumentTab(document, self._catalog)
         self._tab_for_document[id(document)] = tab
+        tab.scene.set_show_roads(self.action_show_roads.isChecked())
+        tab.scene.set_show_all_objects(self.action_show_all_objects.isChecked())
         idx = self._tabs.addTab(tab, self._tab_title_for(document))
         document.session.dirty_changed.connect(lambda _dirty, d=document: self._refresh_tab_title(d))
         document.session.template_changed.connect(lambda d=document: self._refresh_tab_title(d))
@@ -328,10 +409,15 @@ class MainWindow(QMainWindow):
                 self._current_view.connect_mode_changed.disconnect(self._sync_connect_action)
             with contextlib.suppress(TypeError, RuntimeError):
                 self._current_view.place_mode_changed.disconnect(self._sync_place_action)
+            with contextlib.suppress(TypeError, RuntimeError):
+                self._current_view.road_mode_changed.disconnect(self._sync_road_action)
+            with contextlib.suppress(TypeError, RuntimeError):
+                self._current_view.road_failed.disconnect(self._on_road_failed)
         self._current_view = None
         if document is None:
             self._sync_connect_action(False)
             self._sync_place_action(False)
+            self._sync_road_action(False)
             return
         tab = self._tab_for_document.get(id(document))
         if tab is None:
@@ -339,8 +425,11 @@ class MainWindow(QMainWindow):
         self._current_view = tab.view
         self._current_view.connect_mode_changed.connect(self._sync_connect_action)
         self._current_view.place_mode_changed.connect(self._sync_place_action)
+        self._current_view.road_mode_changed.connect(self._sync_road_action)
+        self._current_view.road_failed.connect(self._on_road_failed)
         self._sync_connect_action(self._current_view.connect_mode)
         self._sync_place_action(self._current_view.place_mode)
+        self._sync_road_action(self._current_view.road_mode)
 
     def _sync_connect_action(self, enabled: bool) -> None:
         if self.action_connect.isChecked() == enabled:
@@ -348,6 +437,13 @@ class MainWindow(QMainWindow):
         self.action_connect.blockSignals(True)
         self.action_connect.setChecked(enabled)
         self.action_connect.blockSignals(False)
+
+    def _sync_road_action(self, enabled: bool) -> None:
+        if self.action_add_road.isChecked() == enabled:
+            return
+        self.action_add_road.blockSignals(True)
+        self.action_add_road.setChecked(enabled)
+        self.action_add_road.blockSignals(False)
 
     def _sync_place_action(self, enabled: bool) -> None:
         if self.action_add_zone.isChecked() == enabled:
@@ -406,6 +502,7 @@ class MainWindow(QMainWindow):
         try:
             self._workspace.open_document(Path(path))
         except Exception as exc:
+            _log.exception("open_document failed for %s", path)
             QMessageBox.critical(self, "Open failed", f"Could not load template:\n\n{exc}")
 
     def _on_close_current_tab(self) -> None:
@@ -425,6 +522,7 @@ class MainWindow(QMainWindow):
             self._export_template_png(current.session.path)
             self.statusBar().showMessage(f"Saved {current.session.path.name}", 3000)
         except Exception as exc:
+            _log.exception("save failed for %s", current.session.path)
             QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
 
     def _on_save_as(self) -> None:
@@ -448,6 +546,7 @@ class MainWindow(QMainWindow):
             if current_doc is not None:
                 self._refresh_tab_title(current_doc)
         except Exception as exc:
+            _log.exception("save-as failed for %s", path)
             QMessageBox.critical(self, "Save failed", f"Could not save:\n\n{exc}")
 
     def _export_template_png(self, rmg_path: Path) -> None:
@@ -455,21 +554,29 @@ class MainWindow(QMainWindow):
         if template is None:
             return
         zone_positions: dict[str, tuple[float, float]] | None = None
+        road_node_positions: dict[str, tuple[float, float]] | None = None
         if self._current_view is not None:
             scene = self._current_view.scene()
-            items = getattr(scene, "zone_items", None)
-            if isinstance(items, dict):
-                zone_positions = {
-                    name: (item.pos().x(), item.pos().y()) for name, item in items.items()
-                }
+            zone_getter = getattr(scene, "current_zone_positions", None)
+            if callable(zone_getter):
+                zp = zone_getter()
+                if zp:
+                    zone_positions = zp
+            road_getter = getattr(scene, "current_road_node_positions", None)
+            if callable(road_getter):
+                rp = road_getter()
+                if rp:
+                    road_node_positions = rp
         try:
             render_template_png(
                 template,
                 template_png_path(rmg_path),
                 variant_index=self._workspace.current_variant_index,
                 zone_positions=zone_positions,
+                road_node_positions=road_node_positions,
             )
         except (OSError, FileNotFoundError) as exc:
+            _log.exception("PNG export failed for %s", template_png_path(rmg_path))
             self.statusBar().showMessage(f"PNG export failed: {exc}", 4000)
 
     def _confirm_discard_for(self, document: Document) -> bool:
@@ -494,8 +601,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         for doc in self._workspace.documents:
             if not self._confirm_discard_for(doc):
+                _log.info("close cancelled by user (unsaved changes)")
                 event.ignore()
                 return
+        _log.info("main window closing")
         event.accept()
 
     def _on_toggle_place(self, checked: bool) -> None:
@@ -565,25 +674,13 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_rebuild_catalog(self) -> None:
-        default_dir = str(Path.cwd() / "game-data" / "Core")
-        if not Path(default_dir).exists():
-            default_dir = str(Path.cwd())
-        chosen = QFileDialog.getExistingDirectory(self, "Locate the game's Core folder", default_dir)
-        if not chosen:
-            return
-        try:
-            snapshot = build_snapshot(Path(chosen))
-            write_snapshot(snapshot, self._catalog.snapshot_path)
-        except (CatalogBuildError, OSError) as exc:
-            QMessageBox.critical(self, "Catalog rebuild failed", str(exc))
+        if not rebuild_catalog_interactive(self):
             return
         self._catalog.reload()
-        self.statusBar().showMessage(
-            f"Catalog rebuilt: {len(snapshot['sids'])} SIDs, "
-            f"{len(snapshot['content_lists'])} lists, "
-            f"{len(snapshot['content_pools'])} pools",
-            5000,
-        )
+        if self._catalog.is_loaded():
+            self.statusBar().showMessage("Catalog rebuilt from game install", 4000)
+        else:
+            self.statusBar().showMessage("Catalog build failed (see log)", 4000)
 
     def _on_reload_catalog(self) -> None:
         self._catalog.reload()
@@ -593,9 +690,40 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Catalog snapshot missing or empty", 4000)
 
     def _on_show_explorer(self) -> None:
-        self._explorer_dock.setVisible(True)
-        self._explorer_dock.raise_()
-        self._explorer_dock.activateWindow()
+        dock = self._ensure_explorer_dock()
+        dock.setVisible(True)
+        dock.raise_()
+        dock.activateWindow()
+
+    def _on_show_log(self) -> None:
+        if self._log_window is None:
+            self._log_window = LogWindow(self)
+        self._log_window.show()
+        self._log_window.raise_()
+        self._log_window.activateWindow()
+
+    def _on_toggle_show_roads(self, on: bool) -> None:
+        self.action_show_all_objects.setEnabled(on)
+        self.action_add_road.setEnabled(on)
+        if not on:
+            if self.action_show_all_objects.isChecked():
+                self.action_show_all_objects.setChecked(False)
+            if self.action_add_road.isChecked():
+                self.action_add_road.setChecked(False)
+        for tab in self._tab_for_document.values():
+            tab.scene.set_show_roads(on)
+
+    def _on_toggle_show_all_objects(self, on: bool) -> None:
+        for tab in self._tab_for_document.values():
+            tab.scene.set_show_all_objects(on)
+
+    def _on_toggle_add_road(self, on: bool) -> None:
+        if self._current_view is not None:
+            self._current_view.set_road_mode(on)
+
+    def _on_road_failed(self, message: str) -> None:
+        _log.info("Add Road tool rejected: %s", message)
+        self.statusBar().showMessage(f"Add Road: {message}", 5000)
 
     def _on_template_changed(self) -> None:
         template = self._workspace.template
@@ -659,14 +787,14 @@ class MainWindow(QMainWindow):
 
 
 class _DocumentTab(QWidget):
-    def __init__(self, document: Document) -> None:
+    def __init__(self, document: Document, catalog: GameDataCatalog) -> None:
         super().__init__()
         self.document = document
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self._variant_tabs = VariantTabBar(document.session)
-        self._scene = GraphScene(document.session)
+        self._scene = GraphScene(document.session, catalog)
         self._view = GraphView(self._scene)
         layout.addWidget(self._variant_tabs)
         layout.addWidget(self._view, stretch=1)

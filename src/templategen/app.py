@@ -1,7 +1,8 @@
 """Application entry point."""
 
+import logging
+import platform
 import sys
-from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
@@ -10,33 +11,42 @@ from templategen.catalog.game_data import GameDataCatalog
 from templategen.infra.logging import configure_logging
 from templategen.services.clipboard import EditorClipboard
 from templategen.services.workspace import Workspace
+from templategen.ui.dialogs.first_run import run_first_time_setup_if_needed
 from templategen.ui.icons import IconRegistry
 from templategen.ui.main_window import MainWindow
 from templategen.ui.theme import apply_theme
 
-
-def _resolve_catalog_path() -> Path:
-    """Locate data/catalog.json — next to the executable for bundles, else cwd-relative."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "data" / "catalog.json"
-    return Path("data/catalog.json")
+_log = logging.getLogger(__name__)
 
 
 def main() -> int:
     configure_logging()
+    _log.info(
+        "templategen %s starting (python %s on %s)",
+        __version__,
+        sys.version.split()[0],
+        platform.platform(),
+    )
 
     app = QApplication(sys.argv)
-    app.setApplicationName("HoMM:OE Template Editor")
+    # No colon — Windows rejects ':' in path segments, and QStandardPaths /
+    # QSettings derive the AppLocalDataLocation and config file names from this.
+    app.setApplicationName("HoMM OE Template Editor")
     app.setApplicationVersion(__version__)
     app.setOrganizationName("templategen")
 
     apply_theme(app)
 
+    run_first_time_setup_if_needed()
+
     clipboard = EditorClipboard()
     workspace = Workspace(clipboard)
     icons = IconRegistry()
-    catalog = GameDataCatalog(snapshot_path=_resolve_catalog_path())
+    catalog = GameDataCatalog()
     window = MainWindow(workspace, icons, catalog, clipboard)
     window.show()
+    _log.info("main window shown — entering event loop")
 
-    return app.exec()
+    rc = app.exec()
+    _log.info("event loop exited with code %d", rc)
+    return rc

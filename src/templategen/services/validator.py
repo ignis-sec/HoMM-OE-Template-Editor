@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from templategen.model.template import Template
+
+_log = logging.getLogger(__name__)
 
 
 class Severity(StrEnum):
@@ -76,6 +79,8 @@ class Validator:
                             )
                         )
 
+            # Named connections that touch each zone — used to cross-check roads.
+            connections_by_zone: dict[str, set[str]] = {n: set() for n in zone_names}
             for conn in variant.connections:
                 label = conn.name or f"({conn.from_}→{conn.to})"
                 if conn.name:
@@ -88,6 +93,9 @@ class Validator:
                             )
                         )
                     connection_names.add(conn.name)
+                    for endpoint in (conn.from_, conn.to):
+                        if endpoint in connections_by_zone:
+                            connections_by_zone[endpoint].add(conn.name)
                 if conn.from_ not in zone_names:
                     issues.append(
                         ValidationIssue(
@@ -105,4 +113,41 @@ class Validator:
                         )
                     )
 
+            for zone in variant.zones:
+                touching = connections_by_zone.get(zone.name, set())
+                referenced: set[str] = set()
+                for road in zone.roads or []:
+                    for anchor in (road.from_, road.to):
+                        if anchor.type != "Connection" or not anchor.args:
+                            continue
+                        ref = str(anchor.args[0])
+                        referenced.add(ref)
+                        if ref not in touching:
+                            issues.append(
+                                ValidationIssue(
+                                    Severity.ERROR,
+                                    f"{v_label}: zone '{zone.name}' has a road pointing to "
+                                    f"connection '{ref}', which does not touch this zone",
+                                    zone,
+                                )
+                            )
+                for conn_name in sorted(touching - referenced):
+                    issues.append(
+                        ValidationIssue(
+                            Severity.WARNING,
+                            f"{v_label}: zone '{zone.name}' has connection '{conn_name}' but no "
+                            f"road leading to it",
+                            zone,
+                        )
+                    )
+
+        errors = sum(1 for i in issues if i.severity == Severity.ERROR)
+        warnings = sum(1 for i in issues if i.severity == Severity.WARNING)
+        _log.info(
+            "validation: %d issue(s) (%d error, %d warning) across %d variant(s)",
+            len(issues),
+            errors,
+            warnings,
+            len(template.variants),
+        )
         return issues

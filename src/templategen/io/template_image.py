@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from templategen.model.zone import Zone
 
 _POSITIONS_KEY: Final[str] = "TemplateGenZonePositions"
+_ROAD_NODE_POSITIONS_KEY: Final[str] = "TemplateGenRoadNodePositions"
 _CREATED_WITH_KEY: Final[str] = "created with"
 _CREATED_WITH_VALUE: Final[str] = "https://github.com/ignis-sec/HoMM-OE-Template-Editor"
 
@@ -42,10 +43,13 @@ def render_template_png(
     *,
     variant_index: int = 0,
     zone_positions: dict[str, tuple[float, float]] | None = None,
+    road_node_positions: dict[str, tuple[float, float]] | None = None,
 ) -> None:
     """Render the template thumbnail. If `zone_positions` is provided, the rendering uses
     those scene-coordinate positions (so the PNG reflects what's on the canvas) and the
     same map is embedded as a PNG text chunk for round-trip persistence on the next open.
+    `road_node_positions` is purely metadata — embedded under a separate chunk, never
+    drawn on the thumbnail itself (the thumbnail stays a zone-graph view).
     """
     if not template.variants:
         return
@@ -116,18 +120,35 @@ def render_template_png(
                 separators=(",", ":"),
             ),
         )
+    if road_node_positions:
+        canvas.setText(
+            _ROAD_NODE_POSITIONS_KEY,
+            json.dumps(
+                {key: [float(xy[0]), float(xy[1])] for key, xy in road_node_positions.items()},
+                separators=(",", ":"),
+            ),
+        )
 
     canvas.save(str(output), "PNG")
 
 
 def read_template_png_positions(path: Path) -> dict[str, tuple[float, float]]:
     """Return scene-coord zone positions stored in a sibling PNG, or {} if absent."""
+    return _read_png_position_chunk(path, _POSITIONS_KEY)
+
+
+def read_template_png_road_node_positions(path: Path) -> dict[str, tuple[float, float]]:
+    """Return scene-coord road-graph node positions stored in a sibling PNG, or {}."""
+    return _read_png_position_chunk(path, _ROAD_NODE_POSITIONS_KEY)
+
+
+def _read_png_position_chunk(path: Path, key: str) -> dict[str, tuple[float, float]]:
     if not path.exists():
         return {}
     img = QImage(str(path))
     if img.isNull():
         return {}
-    raw = img.text(_POSITIONS_KEY)
+    raw = img.text(key)
     if not raw:
         return {}
     try:

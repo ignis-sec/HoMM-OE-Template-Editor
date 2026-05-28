@@ -14,6 +14,7 @@ from templategen.services.commands import (
     AddConnectionCommand,
     AddZoneCommand,
     RemoveConnectionCommand,
+    RemoveListItemCommand,
     RemoveZoneCommand,
 )
 from templategen.services.naming import unique_connection_name, unique_zone_name
@@ -27,6 +28,7 @@ from templategen.ui.canvas.alignment import (
     distribute_y,
 )
 from templategen.ui.canvas.connection_item import EdgeItem
+from templategen.ui.canvas.object_node import ConnectionNode, ObjectNode, RoadEdgeItem
 from templategen.ui.canvas.zone_item import ZoneItem
 
 if TYPE_CHECKING:
@@ -39,13 +41,17 @@ _DEFAULT_ZONE_SIZE: Final[float] = 5.0
 class GraphView(QGraphicsView):
     connect_mode_changed = Signal(bool)
     place_mode_changed = Signal(bool)
+    road_mode_changed = Signal(bool)
+    road_failed = Signal(str)
 
     def __init__(self, scene: GraphScene) -> None:
         super().__init__(scene)
         self._scene = scene
         self._connect_mode = False
         self._place_mode = False
+        self._road_mode = False
         self._pending_source: ZoneItem | None = None
+        self._pending_road_source: ObjectNode | ConnectionNode | None = None
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -61,11 +67,16 @@ class GraphView(QGraphicsView):
     def place_mode(self) -> bool:
         return self._place_mode
 
+    @property
+    def road_mode(self) -> bool:
+        return self._road_mode
+
     def set_connect_mode(self, enabled: bool) -> None:
         if enabled == self._connect_mode:
             return
         if enabled:
             self.set_place_mode(False)
+            self.set_road_mode(False)
         self._connect_mode = enabled
         self._pending_source = None
         if enabled:
@@ -79,11 +90,28 @@ class GraphView(QGraphicsView):
             self.viewport().unsetCursor()
         self.connect_mode_changed.emit(enabled)
 
+    def set_road_mode(self, enabled: bool) -> None:
+        if enabled == self._road_mode:
+            return
+        if enabled:
+            self.set_connect_mode(False)
+            self.set_place_mode(False)
+        self._road_mode = enabled
+        self._pending_road_source = None
+        if enabled:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+            self.viewport().unsetCursor()
+        self.road_mode_changed.emit(enabled)
+
     def set_place_mode(self, enabled: bool) -> None:
         if enabled == self._place_mode:
             return
         if enabled:
             self.set_connect_mode(False)
+            self.set_road_mode(False)
             if self._scene.current_variant is None:
                 self.place_mode_changed.emit(False)
                 return
@@ -100,14 +128,21 @@ class GraphView(QGraphicsView):
         items = self._scene.selectedItems()
         if not items:
             return
-        zones: list[ZoneItem] = [i for i in items if isinstance(i, ZoneItem)]
-        edges: list[EdgeItem] = [i for i in items if isinstance(i, EdgeItem)]
-        if not zones and not edges:
-            return
-
         session = self._scene.session
         variant = self._scene.current_variant
         if variant is None:
+            return
+
+        # In road-graph mode the only deletable item is a Road (object/connection
+        # nodes are facets of zones/connections, not freestanding things).
+        roads = [i for i in items if isinstance(i, RoadEdgeItem)]
+        if self._scene.show_roads and roads:
+            self._delete_roads(roads, variant, session)
+            return
+
+        zones: list[ZoneItem] = [i for i in items if isinstance(i, ZoneItem)]
+        edges: list[EdgeItem] = [i for i in items if isinstance(i, EdgeItem)]
+        if not zones and not edges:
             return
 
         # Resolve everything to model objects up front. We never reuse the Qt items
@@ -133,8 +168,32 @@ class GraphView(QGraphicsView):
         finally:
             session.end_macro()
 
+    def _delete_roads(self, road_items, variant, session) -> None:
+        # Resolve each road to its owning zone before mutating, since the model
+        # rebuild that follows each command can destroy the Qt items.
+        targets: list[tuple[object, object]] = []  # (zone, road)
+        for item in road_items:
+            road = item.model_target
+            for zone in variant.zones:
+                if zone.roads and any(r is road for r in zone.roads):
+                    targets.append((zone, road))
+                    break
+        if not targets:
+            return
+        label = "Remove road" if len(targets) == 1 else f"Remove {len(targets)} roads"
+        if len(targets) == 1:
+            zone, road = targets[0]
+            session.execute(RemoveListItemCommand(session, zone, "roads", road, label))
+            return
+        session.begin_macro(label)
+        try:
+            for zone, road in targets:
+                session.execute(RemoveListItemCommand(session, zone, "roads", road))
+        finally:
+            session.end_macro()
+
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
-        if self._connect_mode or self._place_mode:
+        if self._connect_mode or self._place_mode or self._road_mode:
             super().contextMenuEvent(event)
             return
         selected_zones = [i for i in self._scene.selectedItems() if isinstance(i, ZoneItem)]
@@ -184,6 +243,10 @@ class GraphView(QGraphicsView):
                 self.set_place_mode(False)
                 event.accept()
                 return
+            if self._road_mode:
+                self.set_road_mode(False)
+                event.accept()
+                return
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.delete_selected()
             event.accept()
@@ -198,6 +261,10 @@ class GraphView(QGraphicsView):
                 return
             if self._connect_mode:
                 self._handle_connect_click(event)
+                event.accept()
+                return
+            if self._road_mode:
+                self._handle_road_click(event)
                 event.accept()
                 return
         super().mousePressEvent(event)
@@ -235,6 +302,25 @@ class GraphView(QGraphicsView):
         self._create_connection(self._pending_source.model_target, target_item.model_target)
         self.set_connect_mode(False)
 
+    def _handle_road_click(self, event: QMouseEvent) -> None:
+        node = self._road_node_at_viewport_pos(event.position().toPoint())
+        if node is None:
+            self.set_road_mode(False)
+            return
+        if self._pending_road_source is None:
+            self._pending_road_source = node
+            self._scene.clearSelection()
+            node.setSelected(True)
+            return
+        if node is self._pending_road_source:
+            return
+        source = self._pending_road_source
+        self._pending_road_source = None
+        error = self._scene.create_road_between(source, node)
+        if error is not None:
+            self.road_failed.emit(error)
+        self.set_road_mode(False)
+
     def _create_connection(self, source: Zone, target: Zone) -> None:
         variant = self._scene.current_variant
         if variant is None:
@@ -248,6 +334,14 @@ class GraphView(QGraphicsView):
         item = self.itemAt(pos)
         while item is not None:
             if isinstance(item, ZoneItem):
+                return item
+            item = item.parentItem()
+        return None
+
+    def _road_node_at_viewport_pos(self, pos: object) -> ObjectNode | ConnectionNode | None:
+        item = self.itemAt(pos)
+        while item is not None:
+            if isinstance(item, (ObjectNode, ConnectionNode)):
                 return item
             item = item.parentItem()
         return None

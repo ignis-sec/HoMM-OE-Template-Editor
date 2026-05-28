@@ -5,11 +5,12 @@ from __future__ import annotations
 from html import escape
 from typing import TYPE_CHECKING, Any, Final
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QSplitter,
     QTabWidget,
     QTextBrowser,
@@ -17,10 +18,29 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from templategen.ui.asset_icons import (
+    artifact_icon_path,
+    artifact_listable,
+    interactable_icon_path,
+    interactable_listable,
+    resource_icon_path,
+    resource_listable,
+    sid_listable,
+    spell_icon_path,
+    spell_listable,
+)
+from templategen.ui.widgets.listable import ListableItem
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from templategen.catalog.game_data import GameDataCatalog
+
+_SID_ROLE: Final[int] = Qt.ItemDataRole.UserRole + 1
+_ASSET_ICON_SIZE: Final[int] = 40
+_CATEGORIES_WITH_ICONS: Final[frozenset[str]] = frozenset(
+    {"artifacts", "spells", "interactables", "resources", "sids"}
+)
 
 _CATEGORY_LABELS: Final[dict[str, str]] = {
     "lists": "Content Lists",
@@ -29,8 +49,12 @@ _CATEGORY_LABELS: Final[dict[str, str]] = {
     "meta": "Meta Objects",
     "artifacts": "Artifacts",
     "spells": "Spells",
+    "interactables": "Map Objects",
+    "resources": "Resources",
 }
-_CATEGORY_ORDER: Final[list[str]] = ["lists", "pools", "sids", "meta", "artifacts", "spells"]
+_CATEGORY_ORDER: Final[list[str]] = [
+    "lists", "pools", "sids", "meta", "artifacts", "spells", "interactables", "resources",
+]
 
 
 class CatalogExplorer(QWidget):
@@ -95,11 +119,13 @@ class _CategoryTab(QWidget):
         self._search.textChanged.connect(self._apply_filter)
         outer.addWidget(self._search)
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         outer.addWidget(splitter, stretch=1)
 
         self._list = QListWidget()
-        self._list.currentTextChanged.connect(self._show_detail)
+        if category in _CATEGORIES_WITH_ICONS:
+            self._list.setIconSize(QSize(_ASSET_ICON_SIZE, _ASSET_ICON_SIZE))
+        self._list.currentItemChanged.connect(self._on_current_item_changed)
         splitter.addWidget(self._list)
 
         self._detail = QTextBrowser()
@@ -116,13 +142,20 @@ class _CategoryTab(QWidget):
         self._apply_filter(self._search.text())
 
     def select(self, name: str) -> None:
-        items = self._list.findItems(name, Qt.MatchFlag.MatchExactly)
-        if not items:
+        item = self._find_item_by_sid(name)
+        if item is None:
             self._search.clear()
-            items = self._list.findItems(name, Qt.MatchFlag.MatchExactly)
-        if items:
-            self._list.setCurrentItem(items[0])
-            self._list.scrollToItem(items[0])
+            item = self._find_item_by_sid(name)
+        if item is not None:
+            self._list.setCurrentItem(item)
+            self._list.scrollToItem(item)
+
+    def _find_item_by_sid(self, sid: str) -> QListWidgetItem | None:
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item is not None and item.data(_SID_ROLE) == sid:
+                return item
+        return None
 
     def _fetch_names(self) -> list[str]:
         if self._category == "lists":
@@ -137,29 +170,63 @@ class _CategoryTab(QWidget):
             return sorted(self._catalog.known_artifact_sids())
         if self._category == "spells":
             return sorted(self._catalog.known_spell_sids())
+        if self._category == "interactables":
+            return sorted(self._catalog.known_interactable_sids())
+        if self._category == "resources":
+            return sorted(self._catalog.known_resource_sids())
         return []
 
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()
         self._list.clear()
-        for name in self._all_names:
-            if not needle or needle in name.lower():
-                self._list.addItem(name)
+        for sid in self._all_names:
+            entry = self._listable_for(sid)
+            if needle and needle not in entry.value.lower() and needle not in entry.display.lower():
+                continue
+            item = QListWidgetItem(entry.display)
+            if entry.icon is not None:
+                item.setIcon(entry.icon)
+            item.setData(_SID_ROLE, entry.value)
+            self._list.addItem(item)
 
-    def _show_detail(self, name: str) -> None:
-        if not name:
+    def _listable_for(self, sid: str) -> ListableItem:
+        if self._category == "artifacts":
+            return artifact_listable(self._catalog, sid)
+        if self._category == "spells":
+            return spell_listable(self._catalog, sid)
+        if self._category == "interactables":
+            return interactable_listable(self._catalog, sid)
+        if self._category == "resources":
+            return resource_listable(self._catalog, sid)
+        if self._category == "sids":
+            # Surface icons/names for any SID that turns out to be a known asset.
+            return sid_listable(self._catalog, sid)
+        return ListableItem(value=sid)
+
+    def _on_current_item_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        if current is None:
+            self._detail.clear()
+            return
+        sid = current.data(_SID_ROLE)
+        if not isinstance(sid, str):
             self._detail.clear()
             return
         if self._category == "lists":
-            html = self._render_list(name)
+            html = self._render_list(sid)
         elif self._category == "pools":
-            html = self._render_pool(name)
+            html = self._render_pool(sid)
         elif self._category == "sids":
-            html = self._render_sid(name)
+            html = self._render_sid(sid)
         elif self._category == "meta":
-            html = self._render_meta(name)
-        elif self._category in ("artifacts", "spells"):
-            html = self._render_artifact_or_spell(name)
+            html = self._render_meta(sid)
+        elif self._category == "artifacts":
+            html = self._render_artifact(sid)
+        elif self._category == "spells":
+            html = self._render_spell(sid)
+        elif self._category == "interactables":
+            html = self._render_interactable(sid)
+        elif self._category == "resources":
+            html = self._render_resource(sid)
         else:
             html = ""
         self._detail.setHtml(html)
@@ -176,6 +243,8 @@ class _CategoryTab(QWidget):
             "meta": "meta",
             "artifact": "artifacts",
             "spell": "spells",
+            "interactable": "interactables",
+            "resource": "resources",
         }.get(kind)
         if category is not None:
             self._navigate(category, name)
@@ -256,20 +325,183 @@ class _CategoryTab(QWidget):
 
         return "".join(parts)
 
-    def _render_artifact_or_spell(self, name: str) -> str:
-        kind_label = "Artifact" if self._category == "artifacts" else "Spell"
-        parts = [
-            f"<h3>{escape(name)}</h3>",
-            f"<p><em>{kind_label} SID</em></p>",
-        ]
-        for label, names, link_kind in (
-            ("Lists containing it", self._catalog.lists_containing(name), "list"),
-            ("Pools that include it directly", self._catalog.pools_with_direct_sid(name), "pool"),
-            ("Pools that can produce it (transitive)", self._catalog.pools_producing(name), "pool"),
-            ("Pools banning it", self._catalog.pools_banning(name), "pool"),
+    def _render_artifact(self, sid: str) -> str:
+        data = self._catalog.get_artifact(sid)
+        if data is None:
+            return _not_found(sid)
+        name = data.get("name") or sid
+        description = data.get("description") or ""
+        icon_html = ""
+        icon_path = artifact_icon_path(self._catalog, sid)
+        if icon_path is not None:
+            icon_url = QUrl.fromLocalFile(str(icon_path)).toString()
+            icon_html = (
+                f"<img src='{escape(icon_url)}' width='96' height='96' "
+                "style='vertical-align: top; margin-right: 12px;'/>"
+            )
+
+        header_table = (
+            "<table cellpadding='0' cellspacing='0'><tr>"
+            f"<td>{icon_html}</td>"
+            f"<td><h3 style='margin-top:0;'>{escape(str(name))}</h3>"
+            f"<p>{escape(str(description))}</p></td>"
+            "</tr></table>"
+        )
+
+        meta_rows = []
+        for key, label in (
+            ("slot_", "Slot"),
+            ("rarity", "Rarity"),
+            ("itemSet", "Set"),
+            ("goodsValue", "Value"),
         ):
-            parts.append(f"<h4>{escape(label)} ({len(names)})</h4>")
-            parts.append("<p>" + (_link_list(link_kind, names) if names else "<em>none</em>") + "</p>")
+            value = data.get(key)
+            if value is None or value == "":
+                continue
+            meta_rows.append(
+                f"<tr><td><b>{escape(label)}</b></td><td>{escape(str(value))}</td></tr>"
+            )
+        meta_rows.append(f"<tr><td><b>SID</b></td><td><code>{escape(sid)}</code></td></tr>")
+        meta_html = f"<table cellspacing='4' cellpadding='2'>{''.join(meta_rows)}</table>"
+
+        parts = [header_table, meta_html]
+        for ref_label, names, link_kind in (
+            ("Lists containing it", self._catalog.lists_containing(sid), "list"),
+            ("Pools that include it directly", self._catalog.pools_with_direct_sid(sid), "pool"),
+            ("Pools that can produce it (transitive)", self._catalog.pools_producing(sid), "pool"),
+            ("Pools banning it", self._catalog.pools_banning(sid), "pool"),
+        ):
+            if not names:
+                continue
+            parts.append(f"<h4>{escape(ref_label)} ({len(names)})</h4>")
+            parts.append("<p>" + _link_list(link_kind, names) + "</p>")
+        return "".join(parts)
+
+    def _render_spell(self, sid: str) -> str:
+        data = self._catalog.get_spell(sid)
+        if data is None:
+            return _not_found(sid)
+        name = data.get("name") or sid
+        description = data.get("description") or ""
+        icon_html = ""
+        icon_path = spell_icon_path(self._catalog, sid)
+        if icon_path is not None:
+            icon_url = QUrl.fromLocalFile(str(icon_path)).toString()
+            icon_html = (
+                f"<img src='{escape(icon_url)}' width='96' height='96' "
+                "style='vertical-align: top; margin-right: 12px;'/>"
+            )
+
+        magic_type = data.get("magic_type") or ""
+        header_table = (
+            "<table cellpadding='0' cellspacing='0'><tr>"
+            f"<td>{icon_html}</td>"
+            f"<td><h3 style='margin-top:0;'>{escape(str(name))}</h3>"
+            + (f"<p><i>{escape(str(magic_type))}</i></p>" if magic_type else "")
+            + f"<p>{escape(str(description)).replace(chr(10), '<br>')}</p></td>"
+            "</tr></table>"
+        )
+
+        meta_rows = []
+        for key, label in (
+            ("school_", "School"),
+            ("rank", "Rank"),
+            ("usedOnMap", "Used on map"),
+            ("isSpecialMagic", "Special variant"),
+            ("normalMagicSid", "Base spell"),
+        ):
+            value = data.get(key)
+            if value is None or value == "":
+                continue
+            if key == "normalMagicSid" and isinstance(value, str):
+                href = f"spell:{value}"
+                cell = f"<a href='{escape(href)}'>{escape(value)}</a>"
+            else:
+                cell = escape(str(value))
+            meta_rows.append(f"<tr><td><b>{escape(label)}</b></td><td>{cell}</td></tr>")
+        meta_rows.append(f"<tr><td><b>SID</b></td><td><code>{escape(sid)}</code></td></tr>")
+        meta_html = f"<table cellspacing='4' cellpadding='2'>{''.join(meta_rows)}</table>"
+
+        parts = [header_table, meta_html]
+        for ref_label, names, link_kind in (
+            ("Lists containing it", self._catalog.lists_containing(sid), "list"),
+            ("Pools that include it directly", self._catalog.pools_with_direct_sid(sid), "pool"),
+            ("Pools that can produce it (transitive)", self._catalog.pools_producing(sid), "pool"),
+            ("Pools banning it", self._catalog.pools_banning(sid), "pool"),
+        ):
+            if not names:
+                continue
+            parts.append(f"<h4>{escape(ref_label)} ({len(names)})</h4>")
+            parts.append("<p>" + _link_list(link_kind, names) + "</p>")
+        return "".join(parts)
+
+    def _render_interactable(self, sid: str) -> str:
+        return self._render_map_object(sid, self._catalog.get_interactable(sid), interactable_icon_path)
+
+    def _render_resource(self, sid: str) -> str:
+        return self._render_map_object(sid, self._catalog.get_resource(sid), resource_icon_path)
+
+    def _render_map_object(self, sid: str, data: dict | None, icon_resolver) -> str:
+        if data is None:
+            return _not_found(sid)
+        name = data.get("name") or sid
+        description = data.get("description") or ""
+        narrative = data.get("narrative") or ""
+        icon_html = ""
+        icon_path = icon_resolver(self._catalog, sid)
+        if icon_path is not None:
+            icon_url = QUrl.fromLocalFile(str(icon_path)).toString()
+            icon_html = (
+                f"<img src='{escape(icon_url)}' width='64' height='64' "
+                "style='vertical-align: top; margin-right: 12px; image-rendering: pixelated;'/>"
+            )
+
+        header_table = (
+            "<table cellpadding='0' cellspacing='0'><tr>"
+            f"<td>{icon_html}</td>"
+            f"<td><h3 style='margin-top:0;'>{escape(str(name))}</h3>"
+            + (f"<p>{escape(str(description))}</p>" if description else "")
+            + "</td></tr></table>"
+        )
+        if narrative:
+            header_table += f"<p><i>{escape(str(narrative))}</i></p>"
+
+        meta_rows = []
+        for key, label in (
+            ("tag", "Tag"),
+            ("sizeX", "Size X"),
+            ("sizeZ", "Size Z"),
+            ("isInteractable", "Interactable"),
+            ("canBeMirrored", "Mirrorable"),
+        ):
+            value = data.get(key)
+            if value is None or value == "":
+                continue
+            meta_rows.append(
+                f"<tr><td><b>{escape(label)}</b></td><td>{escape(str(value))}</td></tr>"
+            )
+        prefs = data.get("prefs")
+        if isinstance(prefs, list) and prefs:
+            meta_rows.append(
+                "<tr><td><b>Prefabs</b></td><td>" + escape(", ".join(prefs)) + "</td></tr>"
+            )
+        meta_rows.append(f"<tr><td><b>SID</b></td><td><code>{escape(sid)}</code></td></tr>")
+        meta_html = f"<table cellspacing='4' cellpadding='2'>{''.join(meta_rows)}</table>"
+
+        parts = [header_table, meta_html]
+        variants = data.get("variants")
+        if isinstance(variants, list) and variants:
+            parts.append(_render_variants_table(variants))
+        for ref_label, names, link_kind in (
+            ("Lists containing it", self._catalog.lists_containing(sid), "list"),
+            ("Pools that include it directly", self._catalog.pools_with_direct_sid(sid), "pool"),
+            ("Pools that can produce it (transitive)", self._catalog.pools_producing(sid), "pool"),
+            ("Pools banning it", self._catalog.pools_banning(sid), "pool"),
+        ):
+            if not names:
+                continue
+            parts.append(f"<h4>{escape(ref_label)} ({len(names)})</h4>")
+            parts.append("<p>" + _link_list(link_kind, names) + "</p>")
         return "".join(parts)
 
     def _render_meta(self, name: str) -> str:
@@ -351,3 +583,62 @@ def _link_list(kind: str, names: Sequence[str]) -> str:
 
 def _not_found(name: str) -> str:
     return f"<h3>{escape(name)}</h3><p><em>Not found in catalog.</em></p>"
+
+
+def _render_variants_table(variants: list[dict[str, Any]]) -> str:
+    """Render the mined `objects_logic` variant summary as a table — one row per
+    variant with index / value / rollChance / guards / rewards. The index column
+    is the same number template authors reference via `"variant": N` in their
+    content lists, so users can cross-check what each banned/required variant
+    actually contains."""
+    rows = [
+        "<tr>"
+        "<th align='left'>#</th>"
+        "<th align='left'>Value</th>"
+        "<th align='left'>Roll</th>"
+        "<th align='left'>Guards</th>"
+        "<th align='left'>Rewards</th>"
+        "</tr>"
+    ]
+    for v in variants:
+        idx = v.get("index", "?")
+        value = v.get("value", "")
+        roll = v.get("rollChance", "")
+        guards = v.get("guards") or []
+        guard_html = (
+            ", ".join(
+                f"{escape(str(g.get('amount', '')))} × {escape(str(g.get('sid', '')))}"  # noqa: RUF001
+                for g in guards
+                if isinstance(g, dict)
+            )
+            or "<span style='color:#888;'>—</span>"
+        )
+        rewards = v.get("rewards") or []
+        reward_html = (
+            "<br>".join(_format_reward(r) for r in rewards if isinstance(r, dict))
+            or "<span style='color:#888;'>—</span>"
+        )
+        rows.append(
+            "<tr>"
+            f"<td valign='top'><code>{escape(str(idx))}</code></td>"
+            f"<td valign='top'>{escape(str(value))}</td>"
+            f"<td valign='top'>{escape(str(roll))}</td>"
+            f"<td valign='top'>{guard_html}</td>"
+            f"<td valign='top'>{reward_html}</td>"
+            "</tr>"
+        )
+    return (
+        f"<h4>Variants ({len(variants)})</h4>"
+        "<table cellpadding='4' cellspacing='0' border='1' "
+        "style='border-collapse:collapse;'>"
+        + "".join(rows)
+        + "</table>"
+    )
+
+
+def _format_reward(r: dict[str, Any]) -> str:
+    rt = r.get("type", "")
+    params = r.get("params") or []
+    if not params:
+        return f"<code>{escape(str(rt))}</code>"
+    return f"<code>{escape(str(rt))}</code>({escape(', '.join(str(p) for p in params))})"

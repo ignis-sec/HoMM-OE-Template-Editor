@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -12,9 +13,12 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -24,7 +28,8 @@ from PySide6.QtWidgets import (
 from templategen.model.enums import GameMode
 from templategen.model.game_rules import Bonus, GlobalBans, ValueOverride, WinConditions
 from templategen.services.commands import EditFieldCommand
-from templategen.ui.widgets.field_binding import bind_int, bind_string
+from templategen.ui.asset_icons import artifact_listables, sid_listables, spell_listables
+from templategen.ui.widgets.field_binding import bind_int, bind_int_optional, bind_string
 from templategen.ui.widgets.list_editors import (
     InlineSubObjectListEditor,
     ReferenceListEditor,
@@ -268,8 +273,8 @@ class _BansTab(QWidget):
             return
 
         bans = self._template.globalBans
-        spell_choices = lambda: list(self._catalog.known_spell_sids())  # noqa: E731
-        artifact_choices = lambda: list(self._catalog.known_artifact_sids())  # noqa: E731
+        spell_choices = lambda: spell_listables(self._catalog)  # noqa: E731
+        artifact_choices = lambda: artifact_listables(self._catalog)  # noqa: E731
         self._layout.addWidget(QLabel("Banned magics:"))
         self._layout.addWidget(ReferenceListEditor(bans, "magics", self._session, choices=spell_choices))
         self._layout.addWidget(QLabel("Banned items:"))
@@ -302,7 +307,7 @@ def _populate_bonus_row(
     refreshers.append(bind_string(filt, bonus, "receiverFilter", session, optional=True))
     form.addRow("Receiver filter:", filt)
 
-    params = ScalarListEditor(bonus, "parameters", session)
+    params = _BonusParametersWidget(bonus, session, catalog)
     refreshers.append(params.refresh)
     form.addRow("Parameters:", params)
 
@@ -314,13 +319,17 @@ def _populate_value_override_row(
     session: Workspace,
     catalog: GameDataCatalog,
 ) -> None:
-    sid = SidPicker(override, "sid", session, choices=catalog.known_sids)
+    sid = SidPicker(
+        override, "sid", session,
+        choices=lambda: sid_listables(catalog, list(catalog.known_sids())),
+    )
     refreshers.append(sid.refresh)
     form.addRow("Sid:", sid)
 
     variant = QSpinBox()
-    variant.setRange(-1, 100_000)
-    refreshers.append(bind_int(variant, override, "variant", session))
+    variant.setRange(-2, 100_000)
+    variant.setSpecialValueText("(none)")
+    refreshers.append(bind_int_optional(variant, override, "variant", session, sentinel=-2))
     form.addRow("Variant:", variant)
 
     guard = QSpinBox()
@@ -354,13 +363,241 @@ class _BonusesTab(QWidget):
         layout.addStretch()
 
 
+_RESOURCE_NAMES: tuple[str, ...] = ("gold", "wood", "ore", "crystals", "mercury", "gemstones", "dust")
+
+
+class _BonusParametersWidget(QWidget):
+    """Bonus.parameters editor that swaps its inner widget based on the bonus's sid."""
+
+    def __init__(self, bonus: Bonus, session: Workspace, catalog: GameDataCatalog) -> None:
+        super().__init__()
+        self._bonus = bonus
+        self._session = session
+        self._catalog = catalog
+        self._current_sid: str | None = object()  # sentinel — force first build
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(2)
+        self._inner: QWidget | None = None
+        self._build()
+        session.model_object_changed.connect(self._on_model_changed)
+
+    def _on_model_changed(self, obj: object) -> None:
+        # The sid of *this* bonus changed: swap to the right inner editor.
+        if obj is self._bonus and self._bonus.sid != self._current_sid:
+            self._build()
+
+    def refresh(self) -> None:
+        if self._bonus.sid != self._current_sid:
+            self._build()
+
+    def _build(self) -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            w = item.widget() if item is not None else None
+            if w is not None:
+                w.deleteLater()
+        self._current_sid = self._bonus.sid
+
+        if self._bonus.sid == "add_bonus_res":
+            self._inner = _ResBonusParametersEditor(self._bonus, self._session)
+        elif self._bonus.sid == "add_bonus_hero_item":
+            self._inner = _SingleSidParameterEditor(
+                self._bonus, self._session,
+                placeholder="(pick an artifact)",
+                choices=lambda: artifact_listables(self._catalog),
+            )
+        elif self._bonus.sid == "add_bonus_hero_spell":
+            self._inner = _SingleSidParameterEditor(
+                self._bonus, self._session,
+                placeholder="(pick a spell)",
+                choices=lambda: spell_listables(self._catalog),
+            )
+        else:
+            self._inner = ScalarListEditor(self._bonus, "parameters", self._session)
+        self._layout.addWidget(self._inner)
+
+
+class _ResBonusParametersEditor(QWidget):
+    """Two-cell editor for `add_bonus_res` bonuses: resource name + integer amount.
+
+    Stored as `parameters = [resource_name, str(amount)]`.
+    """
+
+    def __init__(self, bonus: Bonus, session: Workspace) -> None:
+        super().__init__()
+        self._bonus = bonus
+        self._session = session
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        self._resource = QComboBox()
+        self._resource.setEditable(True)
+        self._resource.addItems(_RESOURCE_NAMES)
+        completer = self._resource.completer()
+        if completer is not None:
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        row.addWidget(self._resource, stretch=1)
+
+        self._amount = QSpinBox()
+        self._amount.setRange(-1_000_000_000, 1_000_000_000)
+        self._amount.setSingleStep(1)
+        row.addWidget(self._amount)
+
+        self._load_from_model()
+        self._resource.activated.connect(lambda _idx: self._commit())
+        self._resource.editTextChanged.connect(lambda _t: self._commit())
+        self._amount.editingFinished.connect(self._commit)
+        session.model_object_changed.connect(self._on_model_changed)
+
+    def refresh(self) -> None:
+        self._load_from_model()
+
+    def _on_model_changed(self, obj: object) -> None:
+        if obj is self._bonus:
+            self._load_from_model()
+
+    def _load_from_model(self) -> None:
+        params = list(self._bonus.parameters or [])
+        resource = str(params[0]) if len(params) >= 1 and isinstance(params[0], str) else ""
+        amount_str = params[1] if len(params) >= 2 else "0"
+        try:
+            amount = int(amount_str)
+        except (TypeError, ValueError):
+            amount = 0
+        self._resource.blockSignals(True)
+        self._amount.blockSignals(True)
+        try:
+            self._resource.setCurrentText(resource)
+            self._amount.setValue(amount)
+        finally:
+            self._resource.blockSignals(False)
+            self._amount.blockSignals(False)
+
+    def _commit(self) -> None:
+        new = [self._resource.currentText().strip(), str(self._amount.value())]
+        if list(self._bonus.parameters or []) == new:
+            return
+        self._session.execute(EditFieldCommand(self._session, self._bonus, "parameters", new))
+
+
+class _SingleSidParameterEditor(QWidget):
+    """Editable combo whose pick becomes `parameters = [value]` on the bonus."""
+
+    def __init__(
+        self,
+        bonus: Bonus,
+        session: Workspace,
+        *,
+        placeholder: str,
+        choices,
+    ) -> None:
+        super().__init__()
+        self._bonus = bonus
+        self._session = session
+        self._choices = choices
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self._combo = QComboBox()
+        self._combo.setEditable(True)
+        self._combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._combo.lineEdit().setPlaceholderText(placeholder)
+        completer = self._combo.completer()
+        if completer is not None:
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        layout.addWidget(self._combo)
+
+        self._populate_choices()
+        self._sync_from_model()
+
+        self._combo.activated.connect(lambda _idx: self._commit())
+        line = self._combo.lineEdit()
+        if line is not None:
+            line.editingFinished.connect(self._commit)
+        session.model_object_changed.connect(self._on_model_changed)
+
+    def refresh(self) -> None:
+        self._populate_choices()
+        self._sync_from_model()
+
+    def _on_model_changed(self, obj: object) -> None:
+        if obj is self._bonus:
+            self._sync_from_model()
+
+    def _populate_choices(self) -> None:
+        items = self._choices()
+        from templategen.ui.widgets.listable import to_listable
+
+        items = to_listable(items)
+        if any(i.icon is not None for i in items):
+            self._combo.setIconSize(QSize(24, 24))
+        self._combo.blockSignals(True)
+        self._combo.clear()
+        for item in items:
+            if item.icon is not None:
+                self._combo.addItem(item.icon, item.display, item.value)
+            else:
+                self._combo.addItem(item.display, item.value)
+        self._combo.blockSignals(False)
+
+    def _sync_from_model(self) -> None:
+        params = list(self._bonus.parameters or [])
+        target = params[0] if params and isinstance(params[0], str) else ""
+        self._combo.blockSignals(True)
+        try:
+            matched = -1
+            for i in range(self._combo.count()):
+                if self._combo.itemData(i) == target:
+                    matched = i
+                    break
+            if matched >= 0:
+                self._combo.setCurrentIndex(matched)
+            else:
+                self._combo.setEditText(target)
+        finally:
+            self._combo.blockSignals(False)
+
+    def _resolve_value(self) -> str:
+        text = self._combo.currentText()
+        idx = self._combo.currentIndex()
+        if idx >= 0 and self._combo.itemText(idx) == text:
+            data = self._combo.itemData(idx)
+            if isinstance(data, str):
+                return data
+        return text
+
+    def _commit(self) -> None:
+        value = self._resolve_value().strip()
+        current = list(self._bonus.parameters or [])
+        new = [value] if value else []
+        if current == new:
+            return
+        self._session.execute(EditFieldCommand(self._session, self._bonus, "parameters", new))
+
+
 class _ValueOverridesTab(QWidget):
     def __init__(self, session: Workspace, template: Template, catalog: GameDataCatalog) -> None:
         super().__init__()
         self._session = session
         self._template = template
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 8, 8, 8)
 
         if template.valueOverrides is None:
             template.valueOverrides = []
@@ -373,7 +610,9 @@ class _ValueOverridesTab(QWidget):
             populate=lambda form, obj, refs: _populate_value_override_row(form, obj, refs, session, catalog),
             title_for_item=lambda obj, idx: f"[{idx}] {obj.sid}",
         )
-        layout.addWidget(editor)
-        layout.addStretch()
+        body_layout.addWidget(editor)
+        body_layout.addStretch()
+
+        scroll.setWidget(body)
 
 

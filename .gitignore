@@ -33,3 +33,6 @@ game-data/*
 # Secrets / logs
 .env
 *.log
+
+src/templategen/img/items/*
+data/catalog.json

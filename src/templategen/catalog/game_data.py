@@ -4,27 +4,27 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
 from templategen.catalog.builder import SCHEMA_VERSION
 from templategen.catalog.catalog import ReferenceCatalog
+from templategen.infra.paths import catalog_json_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
-_DEFAULT_PATH = Path("data/catalog.json")
 _log = logging.getLogger(__name__)
 
 
 class GameDataCatalog(QObject, ReferenceCatalog):
     changed = Signal()
 
-    def __init__(self, snapshot_path: Path = _DEFAULT_PATH) -> None:
+    def __init__(self, snapshot_path: Path | None = None) -> None:
         super().__init__()
-        self._path = snapshot_path
+        self._path = snapshot_path if snapshot_path is not None else catalog_json_path()
         self._reset()
         self.reload()
 
@@ -37,6 +37,7 @@ class GameDataCatalog(QObject, ReferenceCatalog):
 
     def reload(self) -> None:
         if not self._path.exists():
+            _log.info("no catalog snapshot at %s — using empty catalog", self._path)
             self._reset()
             self.changed.emit()
             return
@@ -71,7 +72,25 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._water_for_biome = dict(data.get("water_for_biome", {}))
         self._artifact_sids = list(data.get("artifact_sids", []))
         self._spell_sids = list(data.get("spell_sids", []))
+        self._artifacts = dict(data.get("artifacts", {}))
+        self._spells = dict(data.get("spells", {}))
+        self._interactables = dict(data.get("interactables", {}))
+        self._resources = dict(data.get("resources", {}))
+        self._fractions = list(data.get("fractions", []))
         self._build_indices()
+        _log.info(
+            "loaded catalog v%s: %d sids, %d artifacts, %d spells, %d interactables, "
+            "%d resources, %d fractions, %d content_lists, %d content_pools",
+            version,
+            len(self._sids),
+            len(self._artifacts),
+            len(self._spells),
+            len(self._interactables),
+            len(self._resources),
+            len(self._fractions),
+            len(self._content_lists),
+            len(self._content_pools),
+        )
         self.changed.emit()
 
     def _reset(self) -> None:
@@ -87,6 +106,11 @@ class GameDataCatalog(QObject, ReferenceCatalog):
         self._water_for_biome: dict[str, str] = {}
         self._artifact_sids: list[str] = []
         self._spell_sids: list[str] = []
+        self._artifacts: dict[str, dict[str, Any]] = {}
+        self._spells: dict[str, dict[str, Any]] = {}
+        self._interactables: dict[str, dict[str, Any]] = {}
+        self._resources: dict[str, dict[str, Any]] = {}
+        self._fractions: list[str] = []
         self._sid_in_lists: dict[str, list[str]] = {}
         self._sid_in_pool_content: dict[str, list[str]] = {}
         self._sid_produced_by_pools: dict[str, list[str]] = {}
@@ -165,6 +189,27 @@ class GameDataCatalog(QObject, ReferenceCatalog):
 
     def known_spell_sids(self) -> Sequence[str]:
         return self._spell_sids
+
+    def get_artifact(self, sid: str) -> dict[str, Any] | None:
+        return self._artifacts.get(sid)
+
+    def get_spell(self, sid: str) -> dict[str, Any] | None:
+        return self._spells.get(sid)
+
+    def known_interactable_sids(self) -> Sequence[str]:
+        return list(self._interactables.keys())
+
+    def get_interactable(self, sid: str) -> dict[str, Any] | None:
+        return self._interactables.get(sid)
+
+    def known_resource_sids(self) -> Sequence[str]:
+        return list(self._resources.keys())
+
+    def get_resource(self, sid: str) -> dict[str, Any] | None:
+        return self._resources.get(sid)
+
+    def known_fractions(self) -> Sequence[str]:
+        return self._fractions
 
     # ── detail lookups ───────────────────────────────────────────────────
     def get_content_list(self, name: str) -> dict[str, Any] | None:

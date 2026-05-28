@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack
 
 from templategen.io.loader import TemplateLoader
-from templategen.io.template_image import read_template_png_positions, template_png_path
+from templategen.io.template_image import (
+    read_template_png_positions,
+    read_template_png_road_node_positions,
+    template_png_path,
+)
 from templategen.io.writer import TemplateWriter
 
 if TYPE_CHECKING:
@@ -16,6 +21,8 @@ if TYPE_CHECKING:
 
     from templategen.model.template import Template
     from templategen.services.commands import Command
+
+_log = logging.getLogger(__name__)
 
 
 class EditorSession(QObject):
@@ -34,6 +41,7 @@ class EditorSession(QObject):
         self._current_variant_index: int = 0
         self._selection: object | None = None
         self._loaded_positions: dict[str, tuple[float, float]] = {}
+        self._loaded_road_node_positions: dict[str, tuple[float, float]] = {}
 
         self._undo_stack = QUndoStack(self)
         self._undo_stack.cleanChanged.connect(self._on_clean_changed)
@@ -69,13 +77,30 @@ class EditorSession(QObject):
         return self._undo_stack.canRedo()
 
     def load(self, path: Path) -> None:
-        self._template = TemplateLoader().load(path)
+        _log.info("loading template from %s", path)
+        try:
+            self._template = TemplateLoader().load(path)
+        except Exception:
+            _log.exception("failed to load template %s", path)
+            raise
         self._path = path
         self._current_variant_index = 0
         self._selection = None
         # Restore zone positions from the sibling thumbnail's metadata if present.
         # This is a "best effort" — missing/corrupt PNG simply falls back to layout.
-        self._loaded_positions = read_template_png_positions(template_png_path(path))
+        png_path = template_png_path(path)
+        self._loaded_positions = read_template_png_positions(png_path)
+        self._loaded_road_node_positions = read_template_png_road_node_positions(png_path)
+        _log.info(
+            "loaded template: %d variant(s), %d zoneLayouts, %d bundles, %d countLimits; "
+            "PNG positions: %d zones, %d road nodes",
+            len(self._template.variants),
+            len(self._template.zoneLayouts),
+            len(self._template.mandatoryContent),
+            len(self._template.contentCountLimits),
+            len(self._loaded_positions),
+            len(self._loaded_road_node_positions),
+        )
         self._undo_stack.clear()
         self.template_changed.emit()
         self.current_variant_changed.emit(0)
@@ -92,13 +117,24 @@ class EditorSession(QObject):
         self._loaded_positions = {}
         return positions
 
+    def consume_loaded_road_node_positions(self) -> dict[str, tuple[float, float]]:
+        """Hand off and clear road-graph node positions loaded from the PNG."""
+        positions = self._loaded_road_node_positions
+        self._loaded_road_node_positions = {}
+        return positions
+
     def save(self, path: Path | None = None) -> None:
         if self._template is None:
             return
         target = path or self._path
         if target is None:
             raise RuntimeError("No path to save to")
-        TemplateWriter().write(self._template, target)
+        _log.info("saving template to %s", target)
+        try:
+            TemplateWriter().write(self._template, target)
+        except Exception:
+            _log.exception("failed to save template to %s", target)
+            raise
         if path is not None:
             self._path = path
         self._undo_stack.setClean()
