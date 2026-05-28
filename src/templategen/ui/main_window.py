@@ -184,6 +184,33 @@ class MainWindow(QMainWindow):
         self.action_show_explorer = QAction("Show &Catalog Explorer", self)
         self.action_show_explorer.triggered.connect(self._on_show_explorer)
 
+        self.action_show_roads = QAction(self._icons.get("roads"), "Toggle &Road Graph", self)
+        self.action_show_roads.setCheckable(True)
+        self.action_show_roads.setShortcut("Ctrl+R")
+        self.action_show_roads.setToolTip("Toggle road graph view (Ctrl+R)")
+        self.action_show_roads.toggled.connect(self._on_toggle_show_roads)
+
+        self.action_show_all_objects = QAction(
+            self._icons.get("show_all_objects"), "Show All Bundle &Objects", self
+        )
+        self.action_show_all_objects.setCheckable(True)
+        self.action_show_all_objects.setShortcut("Ctrl+Shift+R")
+        self.action_show_all_objects.setEnabled(False)
+        self.action_show_all_objects.setToolTip(
+            "In road graph view, also draw bundle ContentItems that no road points at yet "
+            "(Ctrl+Shift+R)"
+        )
+        self.action_show_all_objects.toggled.connect(self._on_toggle_show_all_objects)
+
+        self.action_add_road = QAction(self._icons.get("add_road"), "&Add Road", self)
+        self.action_add_road.setCheckable(True)
+        self.action_add_road.setShortcut("Ctrl+Alt+R")
+        self.action_add_road.setEnabled(False)
+        self.action_add_road.setToolTip(
+            "Click two nodes in the road graph to create the connecting road(s) (Ctrl+Alt+R)"
+        )
+        self.action_add_road.toggled.connect(self._on_toggle_add_road)
+
         self.action_about = QAction(self._icons.get("about"), "&About HoMM:OE Template Editor", self)
         self.action_about.triggered.connect(self._show_about)
 
@@ -270,6 +297,9 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.action_delete)
         toolbar.addSeparator()
         toolbar.addAction(self.action_validate)
+        toolbar.addAction(self.action_show_roads)
+        toolbar.addAction(self.action_show_all_objects)
+        toolbar.addAction(self.action_add_road)
 
     def _build_docks(self) -> None:
         self._library_dock = self._make_dock(
@@ -327,8 +357,10 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self._variant_label)
 
     def _on_document_added(self, document: Document) -> None:
-        tab = _DocumentTab(document)
+        tab = _DocumentTab(document, self._catalog)
         self._tab_for_document[id(document)] = tab
+        tab.scene.set_show_roads(self.action_show_roads.isChecked())
+        tab.scene.set_show_all_objects(self.action_show_all_objects.isChecked())
         idx = self._tabs.addTab(tab, self._tab_title_for(document))
         document.session.dirty_changed.connect(lambda _dirty, d=document: self._refresh_tab_title(d))
         document.session.template_changed.connect(lambda d=document: self._refresh_tab_title(d))
@@ -366,10 +398,15 @@ class MainWindow(QMainWindow):
                 self._current_view.connect_mode_changed.disconnect(self._sync_connect_action)
             with contextlib.suppress(TypeError, RuntimeError):
                 self._current_view.place_mode_changed.disconnect(self._sync_place_action)
+            with contextlib.suppress(TypeError, RuntimeError):
+                self._current_view.road_mode_changed.disconnect(self._sync_road_action)
+            with contextlib.suppress(TypeError, RuntimeError):
+                self._current_view.road_failed.disconnect(self._on_road_failed)
         self._current_view = None
         if document is None:
             self._sync_connect_action(False)
             self._sync_place_action(False)
+            self._sync_road_action(False)
             return
         tab = self._tab_for_document.get(id(document))
         if tab is None:
@@ -377,8 +414,11 @@ class MainWindow(QMainWindow):
         self._current_view = tab.view
         self._current_view.connect_mode_changed.connect(self._sync_connect_action)
         self._current_view.place_mode_changed.connect(self._sync_place_action)
+        self._current_view.road_mode_changed.connect(self._sync_road_action)
+        self._current_view.road_failed.connect(self._on_road_failed)
         self._sync_connect_action(self._current_view.connect_mode)
         self._sync_place_action(self._current_view.place_mode)
+        self._sync_road_action(self._current_view.road_mode)
 
     def _sync_connect_action(self, enabled: bool) -> None:
         if self.action_connect.isChecked() == enabled:
@@ -386,6 +426,13 @@ class MainWindow(QMainWindow):
         self.action_connect.blockSignals(True)
         self.action_connect.setChecked(enabled)
         self.action_connect.blockSignals(False)
+
+    def _sync_road_action(self, enabled: bool) -> None:
+        if self.action_add_road.isChecked() == enabled:
+            return
+        self.action_add_road.blockSignals(True)
+        self.action_add_road.setChecked(enabled)
+        self.action_add_road.blockSignals(False)
 
     def _sync_place_action(self, enabled: bool) -> None:
         if self.action_add_zone.isChecked() == enabled:
@@ -493,19 +540,26 @@ class MainWindow(QMainWindow):
         if template is None:
             return
         zone_positions: dict[str, tuple[float, float]] | None = None
+        road_node_positions: dict[str, tuple[float, float]] | None = None
         if self._current_view is not None:
             scene = self._current_view.scene()
-            items = getattr(scene, "zone_items", None)
-            if isinstance(items, dict):
-                zone_positions = {
-                    name: (item.pos().x(), item.pos().y()) for name, item in items.items()
-                }
+            zone_getter = getattr(scene, "current_zone_positions", None)
+            if callable(zone_getter):
+                zp = zone_getter()
+                if zp:
+                    zone_positions = zp
+            road_getter = getattr(scene, "current_road_node_positions", None)
+            if callable(road_getter):
+                rp = road_getter()
+                if rp:
+                    road_node_positions = rp
         try:
             render_template_png(
                 template,
                 template_png_path(rmg_path),
                 variant_index=self._workspace.current_variant_index,
                 zone_positions=zone_positions,
+                road_node_positions=road_node_positions,
             )
         except (OSError, FileNotFoundError) as exc:
             self.statusBar().showMessage(f"PNG export failed: {exc}", 4000)
@@ -624,6 +678,28 @@ class MainWindow(QMainWindow):
         dock.raise_()
         dock.activateWindow()
 
+    def _on_toggle_show_roads(self, on: bool) -> None:
+        self.action_show_all_objects.setEnabled(on)
+        self.action_add_road.setEnabled(on)
+        if not on:
+            if self.action_show_all_objects.isChecked():
+                self.action_show_all_objects.setChecked(False)
+            if self.action_add_road.isChecked():
+                self.action_add_road.setChecked(False)
+        for tab in self._tab_for_document.values():
+            tab.scene.set_show_roads(on)
+
+    def _on_toggle_show_all_objects(self, on: bool) -> None:
+        for tab in self._tab_for_document.values():
+            tab.scene.set_show_all_objects(on)
+
+    def _on_toggle_add_road(self, on: bool) -> None:
+        if self._current_view is not None:
+            self._current_view.set_road_mode(on)
+
+    def _on_road_failed(self, message: str) -> None:
+        self.statusBar().showMessage(f"Add Road: {message}", 5000)
+
     def _on_template_changed(self) -> None:
         template = self._workspace.template
         path = self._workspace.path
@@ -686,14 +762,14 @@ class MainWindow(QMainWindow):
 
 
 class _DocumentTab(QWidget):
-    def __init__(self, document: Document) -> None:
+    def __init__(self, document: Document, catalog: GameDataCatalog) -> None:
         super().__init__()
         self.document = document
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self._variant_tabs = VariantTabBar(document.session)
-        self._scene = GraphScene(document.session)
+        self._scene = GraphScene(document.session, catalog)
         self._view = GraphView(self._scene)
         layout.addWidget(self._variant_tabs)
         layout.addWidget(self._view, stretch=1)

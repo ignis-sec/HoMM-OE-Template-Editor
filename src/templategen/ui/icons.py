@@ -23,6 +23,9 @@ _ICON_MAP: Final[dict[str, str]] = {
     "library": "fa5s.book",
     "inspector": "fa5s.sliders-h",
     "about": "fa5s.info-circle",
+    "roads": "fa5s.road",
+    "show_all_objects": "fa5s.eye",
+    "add_road": "fa5s.route",
 }
 
 
