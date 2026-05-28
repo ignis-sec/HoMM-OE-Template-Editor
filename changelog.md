@@ -11,6 +11,8 @@
 
 * Crossroads are now displayed correctly in the road editor.
 
+* Fix difficulty navigating via zoom in/out on larger template graphs.
+
 ---
 
 # v0.1.0 - Significant Changes

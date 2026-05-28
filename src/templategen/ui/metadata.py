@@ -9,7 +9,10 @@ CHANGELOG = """
 </ul>
 <h2 id="bugfixes">Bugfixes</h2>
 <ul>
-<li>Crossroads are now displayed correctly in the road editor.</li>
+<li><p>Crossroads are now displayed correctly in the road editor.</p>
+</li>
+<li><p>Fix difficulty navigating via zoom in/out on larger template graphs.</p>
+</li>
 </ul>
 <hr>
 <h1 id="v0-1-0-significant-changes">v0.1.0 - Significant Changes</h1>

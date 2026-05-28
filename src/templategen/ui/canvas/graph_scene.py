@@ -43,6 +43,9 @@ if TYPE_CHECKING:
     from templategen.model.content import Anchor, ContentItem
     from templategen.services.session import EditorSession
 
+# Initial scene rect size. GraphView.wheelEvent grows the rect on demand so the
+# scrollbars stay meaningful (snapped to items + current viewport extent) while
+# still letting "zoom under mouse" work even when content fits in the viewport.
 _SCENE_SIZE: Final[float] = 1200.0
 _LAYOUT_SCALE: Final[float] = 500.0
 _PARALLEL_SPACING: Final[float] = 12.0
