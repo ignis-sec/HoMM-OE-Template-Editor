@@ -71,6 +71,7 @@ from templategen.ui.widgets.field_binding import (
     bind_choice,
     bind_float,
     bind_int,
+    bind_int_optional,
     bind_string,
 )
 from templategen.ui.widgets.list_editors import (
@@ -465,7 +466,7 @@ class Inspector(QWidget):
             "Sid:",
             self._sid_picker(item, "sid", choices=lambda: content_sid_listables(self._catalog)),
         )
-        form.addRow("Variant:", self._int(item, "variant", -1, 100_000, 1))
+        form.addRow("Variant:", self._optional_int(item, "variant", -1, 100_000, 1))
         form.addRow("Name:", self._line(item, "name", optional=True))
 
         flags = self._section("Flags")
@@ -476,7 +477,7 @@ class Inspector(QWidget):
         flags.addRow("Road:", self._check(item, "road"))
 
         owner_section = self._section("Owner / Guard")
-        owner_section.addRow("Owner:", self._combo(item, "owner", _PLAYER_VALUES))
+        owner_section.addRow("Owner:", self._optional_combo(item, "owner", _PLAYER_VALUES))
         owner_section.addRow("Guard value:", self._int(item, "guardValue", 0, 1_000_000_000, 1000))
 
         lists = self._section("Reference lists")
@@ -495,7 +496,7 @@ class Inspector(QWidget):
             "Sid:",
             self._sid_picker(item, "sid", choices=lambda: content_sid_listables(self._catalog)),
         )
-        form.addRow("Variant:", self._int(item, "variant", -1, 100_000, 1))
+        form.addRow("Variant:", self._optional_int(item, "variant", -1, 100_000, 1))
         form.addRow("Max count:", self._int(item, "maxCount", 0, 1_000_000, 1))
 
         lists = self._section("Reference lists")
@@ -905,6 +906,23 @@ class Inspector(QWidget):
         widget.setSingleStep(step)
         widget.setMinimumWidth(_NUMERIC_MIN_WIDTH)
         self._refreshers.append(bind_int(widget, target, field, self._session))
+        return widget
+
+    def _optional_int(
+        self, target: object, field: str, minimum: int, maximum: int, step: int
+    ) -> QSpinBox:
+        """Integer spinbox with a leading "(none)" sentinel that clears the field
+        via UnsetFieldCommand. Scrolling below `minimum` reveals "(none)"; the
+        spinbox shows "(none)" whenever the model's field is unset/None."""
+        sentinel = minimum - 1
+        widget = QSpinBox()
+        widget.setRange(sentinel, maximum)
+        widget.setSingleStep(step)
+        widget.setSpecialValueText("(none)")
+        widget.setMinimumWidth(_NUMERIC_MIN_WIDTH)
+        self._refreshers.append(
+            bind_int_optional(widget, target, field, self._session, sentinel=sentinel)
+        )
         return widget
 
     def _double(

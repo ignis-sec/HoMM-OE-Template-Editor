@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
-from templategen.services.commands import EditFieldCommand
+from templategen.services.commands import EditFieldCommand, UnsetFieldCommand
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QLineEdit, QSpinBox
@@ -66,6 +66,46 @@ def bind_int(
     def refresh() -> None:
         current = getattr(target, field)
         new = int(current) if current is not None else 0
+        if widget.value() != new:
+            widget.blockSignals(True)
+            widget.setValue(new)
+            widget.blockSignals(False)
+
+    widget.editingFinished.connect(on_commit)
+    return refresh
+
+
+def bind_int_optional(
+    widget: QSpinBox,
+    target: object,
+    field: str,
+    session: EditorSession,
+    *,
+    sentinel: int,
+) -> Refresh:
+    """Two-way bind a spinbox where `sentinel` (typically `minimum`, paired with
+    `setSpecialValueText("(none)")`) maps to the field being absent from
+    `model_fields_set` so the writer omits it from JSON."""
+
+    def from_model() -> int:
+        current = getattr(target, field)
+        return sentinel if current is None else int(current)
+
+    widget.blockSignals(True)
+    widget.setValue(from_model())
+    widget.blockSignals(False)
+
+    def on_commit() -> None:
+        value = widget.value()
+        current = getattr(target, field)
+        if value == sentinel:
+            if current is not None or field in target.__pydantic_fields_set__:
+                session.execute(UnsetFieldCommand(session, target, field))
+        elif value != current:
+            session.execute(EditFieldCommand(session, target, field, value))
+
+    def refresh() -> None:
+        new = from_model()
         if widget.value() != new:
             widget.blockSignals(True)
             widget.setValue(new)

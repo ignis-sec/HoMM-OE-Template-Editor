@@ -29,7 +29,7 @@ from templategen.model.enums import GameMode
 from templategen.model.game_rules import Bonus, GlobalBans, ValueOverride, WinConditions
 from templategen.services.commands import EditFieldCommand
 from templategen.ui.asset_icons import artifact_listables, sid_listables, spell_listables
-from templategen.ui.widgets.field_binding import bind_int, bind_string
+from templategen.ui.widgets.field_binding import bind_int, bind_int_optional, bind_string
 from templategen.ui.widgets.list_editors import (
     InlineSubObjectListEditor,
     ReferenceListEditor,
@@ -327,8 +327,9 @@ def _populate_value_override_row(
     form.addRow("Sid:", sid)
 
     variant = QSpinBox()
-    variant.setRange(-1, 100_000)
-    refreshers.append(bind_int(variant, override, "variant", session))
+    variant.setRange(-2, 100_000)
+    variant.setSpecialValueText("(none)")
+    refreshers.append(bind_int_optional(variant, override, "variant", session, sentinel=-2))
     form.addRow("Variant:", variant)
 
     guard = QSpinBox()
