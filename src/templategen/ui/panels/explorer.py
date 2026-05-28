@@ -489,6 +489,9 @@ class _CategoryTab(QWidget):
         meta_html = f"<table cellspacing='4' cellpadding='2'>{''.join(meta_rows)}</table>"
 
         parts = [header_table, meta_html]
+        variants = data.get("variants")
+        if isinstance(variants, list) and variants:
+            parts.append(_render_variants_table(variants))
         for ref_label, names, link_kind in (
             ("Lists containing it", self._catalog.lists_containing(sid), "list"),
             ("Pools that include it directly", self._catalog.pools_with_direct_sid(sid), "pool"),
@@ -580,3 +583,62 @@ def _link_list(kind: str, names: Sequence[str]) -> str:
 
 def _not_found(name: str) -> str:
     return f"<h3>{escape(name)}</h3><p><em>Not found in catalog.</em></p>"
+
+
+def _render_variants_table(variants: list[dict[str, Any]]) -> str:
+    """Render the mined `objects_logic` variant summary as a table — one row per
+    variant with index / value / rollChance / guards / rewards. The index column
+    is the same number template authors reference via `"variant": N` in their
+    content lists, so users can cross-check what each banned/required variant
+    actually contains."""
+    rows = [
+        "<tr>"
+        "<th align='left'>#</th>"
+        "<th align='left'>Value</th>"
+        "<th align='left'>Roll</th>"
+        "<th align='left'>Guards</th>"
+        "<th align='left'>Rewards</th>"
+        "</tr>"
+    ]
+    for v in variants:
+        idx = v.get("index", "?")
+        value = v.get("value", "")
+        roll = v.get("rollChance", "")
+        guards = v.get("guards") or []
+        guard_html = (
+            ", ".join(
+                f"{escape(str(g.get('amount', '')))} × {escape(str(g.get('sid', '')))}"  # noqa: RUF001
+                for g in guards
+                if isinstance(g, dict)
+            )
+            or "<span style='color:#888;'>—</span>"
+        )
+        rewards = v.get("rewards") or []
+        reward_html = (
+            "<br>".join(_format_reward(r) for r in rewards if isinstance(r, dict))
+            or "<span style='color:#888;'>—</span>"
+        )
+        rows.append(
+            "<tr>"
+            f"<td valign='top'><code>{escape(str(idx))}</code></td>"
+            f"<td valign='top'>{escape(str(value))}</td>"
+            f"<td valign='top'>{escape(str(roll))}</td>"
+            f"<td valign='top'>{guard_html}</td>"
+            f"<td valign='top'>{reward_html}</td>"
+            "</tr>"
+        )
+    return (
+        f"<h4>Variants ({len(variants)})</h4>"
+        "<table cellpadding='4' cellspacing='0' border='1' "
+        "style='border-collapse:collapse;'>"
+        + "".join(rows)
+        + "</table>"
+    )
+
+
+def _format_reward(r: dict[str, Any]) -> str:
+    rt = r.get("type", "")
+    params = r.get("params") or []
+    if not params:
+        return f"<code>{escape(str(rt))}</code>"
+    return f"<code>{escape(str(rt))}</code>({escape(', '.join(str(p) for p in params))})"

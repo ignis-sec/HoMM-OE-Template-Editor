@@ -36,7 +36,7 @@ class CatalogSnapshot(TypedDict):
     fractions: list[str]
 
 
-SCHEMA_VERSION: Final[int] = 8
+SCHEMA_VERSION: Final[int] = 9
 
 _BONUS_SIDS: Final[list[str]] = [
     "add_bonus_hero_item",
@@ -223,11 +223,88 @@ _MAP_OBJECT_FIELDS_TO_KEEP: Final[tuple[str, ...]] = (
 
 
 def _collect_interactables(core_root: Path) -> dict[str, dict[str, Any]]:
-    return _collect_map_objects(core_root, "DB/map/objects/4_interactables.json")
+    entries = _collect_map_objects(core_root, "DB/map/objects/4_interactables.json")
+    _attach_object_variants(entries, core_root)
+    return entries
 
 
 def _collect_resources(core_root: Path) -> dict[str, dict[str, Any]]:
-    return _collect_map_objects(core_root, "DB/map/objects/3_resources.json")
+    entries = _collect_map_objects(core_root, "DB/map/objects/3_resources.json")
+    _attach_object_variants(entries, core_root)
+    return entries
+
+
+def _attach_object_variants(
+    entries: dict[str, dict[str, Any]], core_root: Path
+) -> None:
+    """Walk DB/objects_logic/**/*.json for entries matching catalog sids and
+    fold a compact per-variant summary onto each. Each `objects_logic` JSON
+    file describes the variant table for one object type (47 pandora boxes,
+    72 enchanted scroll boxes, 15 camp fires, etc.); template authors use the
+    variant index to ban / require specific rewards. We surface the same info
+    here so the catalog explorer can show it without re-reading game data.
+    """
+    if not entries:
+        return
+    logic_root = core_root / "DB" / "objects_logic"
+    if not logic_root.is_dir():
+        return
+    for jf in logic_root.rglob("*.json"):
+        try:
+            data = _read_json(jf)
+        except (OSError, json.JSONDecodeError):
+            continue
+        array = data.get("array") if isinstance(data, dict) else None
+        if not isinstance(array, list):
+            continue
+        for entry in array:
+            if not isinstance(entry, dict):
+                continue
+            sid = entry.get("id")
+            if not isinstance(sid, str) or sid not in entries:
+                continue
+            variants = entry.get("variants")
+            if not isinstance(variants, list) or not variants:
+                continue
+            summary = [
+                _summarize_variant(i, v)
+                for i, v in enumerate(variants)
+                if isinstance(v, dict)
+            ]
+            if summary:
+                entries[sid]["variants"] = summary
+
+
+def _summarize_variant(index: int, v: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"index": index}
+    for src, dst in (("value", "value"), ("rollChance", "rollChance"), ("aiValue", "aiValue")):
+        if src in v and v[src] is not None:
+            out[dst] = v[src]
+    guards = v.get("guardUnits")
+    if isinstance(guards, list):
+        compact_guards = [
+            {"sid": g.get("sid"), "amount": g.get("amount")}
+            for g in guards
+            if isinstance(g, dict) and g.get("sid")
+        ]
+        if compact_guards:
+            out["guards"] = compact_guards
+    reward_set = v.get("rewardSet")
+    if isinstance(reward_set, dict):
+        rewards = reward_set.get("rewards")
+        if isinstance(rewards, list):
+            compact_rewards = []
+            for r in rewards:
+                if not isinstance(r, dict):
+                    continue
+                rt = r.get("rewardType")
+                if not rt:
+                    continue
+                params = r.get("parameters") if isinstance(r.get("parameters"), list) else []
+                compact_rewards.append({"type": rt, "params": [str(p) for p in params]})
+            if compact_rewards:
+                out["rewards"] = compact_rewards
+    return out
 
 
 def _collect_fractions(core_root: Path) -> list[str]:

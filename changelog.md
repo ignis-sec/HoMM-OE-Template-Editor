@@ -17,6 +17,10 @@
 
 * Added road view mode / road editor, which makes managing road connections much easier.
 
+* Added a logging window to troubleshoot issues.
+
+* Object/resource variants are now included in the catalog explorer.
+
 ## Improvements
 
 * Faction selection fields are now proper dropdowns instead of free fields.

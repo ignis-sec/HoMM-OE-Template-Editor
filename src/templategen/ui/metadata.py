@@ -15,6 +15,12 @@ CHANGELOG = """
 </li>
 <li><p>Catalog explorer now shows detailed content about artifacts, spells, resources and map objects.</p>
 </li>
+<li><p>Added road view mode / road editor, which makes managing road connections much easier.</p>
+</li>
+<li><p>Added a logging window to troubleshoot issues.</p>
+</li>
+<li><p>Object/resource variants are now included in the catalog explorer.</p>
+</li>
 </ul>
 <h2 id="improvements">Improvements</h2>
 <ul>
@@ -28,12 +34,20 @@ CHANGELOG = """
 </li>
 <li><p>Improved UI load times.</p>
 </li>
+<li><p>Validation checks will now perform a sanity check for road connections and warn about possible disconnections.</p>
+</li>
+<li><p>Content lists can now be renamed.</p>
+</li>
 </ul>
 <h2 id="bugfixes">Bugfixes</h2>
 <ul>
 <li><p>Removed empty type option from road types.</p>
 </li>
 <li><p>Value overrides tab on template editor is now scrollable and won&#39;t cause super long dialog windows that overflow the screen if there are too many overrides.</p>
+</li>
+<li><p>Default owner player and object variant is now correctly set as (none) instead of Player1/variant 0.</p>
+</li>
+<li><p>Templates with disconnected graphs (tournament ones such as exodus or sprint) will now be autopositioned in a way that doesn&#39;t overlap them.</p>
 </li>
 </ul>
 <hr>
@@ -95,4 +109,5 @@ CHANGELOG = """
 <ul>
 <li>CICD will not print checksum of generated executable so it can be easily compared to the executable in release</li>
 </ul>
+
 """
