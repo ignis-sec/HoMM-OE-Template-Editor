@@ -58,6 +58,7 @@ from templategen.model.zone import EncounterHolesSettings, Road, Zone
 from templategen.services.commands import (
     ChangeConnectionTypeCommand,
     EditFieldCommand,
+    RenameContentItemCommand,
     UnsetFieldCommand,
 )
 from templategen.ui.asset_icons import (
@@ -467,7 +468,7 @@ class Inspector(QWidget):
             self._sid_picker(item, "sid", choices=lambda: content_sid_listables(self._catalog)),
         )
         form.addRow("Variant:", self._optional_int(item, "variant", -1, 100_000, 1))
-        form.addRow("Name:", self._line(item, "name", optional=True))
+        form.addRow("Name:", self._content_item_name_field(item))
 
         flags = self._section("Flags")
         flags.addRow("Is mine:", self._check(item, "isMine"))
@@ -898,6 +899,45 @@ class Inspector(QWidget):
         widget = QLineEdit()
         widget.setMinimumWidth(_INPUT_MIN_WIDTH)
         self._refreshers.append(bind_string(widget, target, field, self._session, optional=optional))
+        return widget
+
+    def _content_item_name_field(self, item: ContentItem) -> QLineEdit:
+        """ContentItem name editor — routes renames through RenameContentItemCommand
+        so any MandatoryContent road anchors that reference the old name follow
+        the change in a single undo step. Clearing the name uses UnsetFieldCommand,
+        which leaves dangling anchors for the validator to flag rather than
+        silently breaking unrelated roads."""
+        widget = QLineEdit()
+        widget.setMinimumWidth(_INPUT_MIN_WIDTH)
+        widget.setText(item.name or "")
+
+        def on_commit() -> None:
+            text = widget.text().strip()
+            new = text or None
+            old = item.name
+            if new == old:
+                return
+            template = self._session.template
+            if new is None:
+                if old is not None or "name" in item.__pydantic_fields_set__:
+                    self._session.execute(
+                        UnsetFieldCommand(self._session, item, "name")
+                    )
+                return
+            if template is None:
+                self._session.execute(EditFieldCommand(self._session, item, "name", new))
+                return
+            self._session.execute(
+                RenameContentItemCommand(self._session, template, item, new)
+            )
+
+        def refresh() -> None:
+            text = item.name or ""
+            if widget.text() != text:
+                widget.setText(text)
+
+        widget.editingFinished.connect(on_commit)
+        self._refreshers.append(refresh)
         return widget
 
     def _int(self, target: object, field: str, minimum: int, maximum: int, step: int) -> QSpinBox:

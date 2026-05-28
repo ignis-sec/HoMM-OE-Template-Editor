@@ -116,6 +116,56 @@ class RenameLibraryItemCommand(Command):
             self._session.model_object_changed.emit(obj)
 
 
+class RenameContentItemCommand(Command):
+    """Rename a ContentItem's `name` field and rewrite every road anchor that
+    referenced the old name (anchors of type "MandatoryContent" whose args[0]
+    matches). Used by both the inspector's name field and the road-creation
+    auto-name path, so renames stay consistent with the road graph."""
+
+    def __init__(
+        self,
+        session: EditorSession,
+        template: Template,
+        item: object,
+        new_name: str,
+        text: str | None = None,
+    ) -> None:
+        super().__init__(session, text or f"Rename to {new_name}")
+        self._template = template
+        self._item = item
+        self._new = new_name
+        self._old: str | None = getattr(item, "name", None)
+
+    def redo(self) -> None:
+        self._apply(self._old, self._new)
+
+    def undo(self) -> None:
+        self._apply(self._new, self._old)
+
+    def _apply(self, old: str | None, new: str | None) -> None:
+        if old == new:
+            return
+        self._item.name = new
+        touched: list[object] = [self._item]
+
+        # Only cascade when there's a non-empty old name to find anchor references for.
+        if old:
+            for variant in self._template.variants:
+                for zone in variant.zones:
+                    for road in zone.roads or []:
+                        for anchor in (road.from_, road.to):
+                            if anchor.type != "MandatoryContent":
+                                continue
+                            for i, arg in enumerate(anchor.args):
+                                if arg == old:
+                                    anchor.args[i] = new
+                                    if zone not in touched:
+                                        touched.append(zone)
+
+        for obj in touched:
+            self._session.model_object_changed.emit(obj)
+
+
 class UnsetFieldCommand(Command):
     """Restore a Pydantic field to its 'never set' state so the writer's
     `exclude_unset=True` drops it from the dumped JSON. Used for optional fields

@@ -56,12 +56,14 @@ class ObjectNode(QGraphicsObject):
         icon: QIcon | None = None,
         fill: QColor,
         glyph: str | None = None,
+        owning_zone_name: str | None = None,
     ) -> None:
         super().__init__()
         self._model = model
         self._label = label
         self._fill = fill
         self._glyph = glyph
+        self._owning_zone_name = owning_zone_name
         size = int(_OBJECT_RADIUS * 2)
         self._pixmap = icon.pixmap(size, size) if icon is not None else None
         self._edges: list[Any] = []
@@ -74,6 +76,13 @@ class ObjectNode(QGraphicsObject):
     @property
     def model_target(self) -> object:
         return self._model
+
+    @property
+    def owning_zone_name(self) -> str | None:
+        """The zone this node was placed under in the road graph. Disambiguates
+        which zone to route through when the underlying model object (e.g. a
+        bundle ContentItem) is reachable from several zones."""
+        return self._owning_zone_name
 
     def add_edge(self, edge: object) -> None:
         self._edges.append(edge)

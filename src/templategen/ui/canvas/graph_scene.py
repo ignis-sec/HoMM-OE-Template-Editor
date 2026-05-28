@@ -150,7 +150,9 @@ class GraphScene(QGraphicsScene):
             linking them → two roads (one per zone) plus toggling `road = True`
             on the bridge connection;
           - otherwise refuses with an explanatory error.
-        All mutations run inside a single undo macro.
+        Unnamed bundle ContentItems (only ever drawn with "Show All Objects" on)
+        get a synthesized unique name as part of the same macro, so the resulting
+        road anchor can actually resolve them. All mutations are atomic.
         """
         variant = self.current_variant
         if variant is None:
@@ -159,7 +161,24 @@ class GraphScene(QGraphicsScene):
         if template is None:
             return "No template loaded."
 
-        plan = self._plan_road(source_node, target_node, variant, template)
+        # If either endpoint is an unnamed ContentItem, plan a name for it so
+        # the planner can synthesise its anchor. The actual setattr happens
+        # below as the first commands of the macro.
+        pending_names: dict[int, str] = {}
+        used_names: set[str] = {
+            ci.name
+            for bundle in template.mandatoryContent
+            for ci in bundle.content
+            if ci.name is not None
+        }
+        for node in (source_node, target_node):
+            target = node.model_target
+            if isinstance(target, ContentItemRuntime) and target.name is None:
+                proposed = _unique_content_item_name(target, used_names)
+                pending_names[id(target)] = proposed
+                used_names.add(proposed)
+
+        plan = self._plan_road(source_node, target_node, variant, template, pending_names)
         if isinstance(plan, str):
             return plan
 
@@ -169,6 +188,13 @@ class GraphScene(QGraphicsScene):
         label = "Add road" if len(plan) == 1 else "Add road (multi-zone)"
         session.begin_macro(label)
         try:
+            # Assign synthesized names FIRST so the road anchors we're about to
+            # add land on items the rest of the system can resolve by name.
+            for node in (source_node, target_node):
+                target = node.model_target
+                new_name = pending_names.get(id(target))
+                if new_name is not None:
+                    session.execute(EditFieldCommand(session, target, "name", new_name))
             for zone, src_anchor, dst_anchor, bridge_conn in plan:
                 if zone.roads is None:
                     session.execute(EditFieldCommand(session, zone, "roads", []))
@@ -186,6 +212,7 @@ class GraphScene(QGraphicsScene):
         target: ObjectNode | ConnectionNode,
         variant: Variant,
         template: object,
+        pending_names: dict[int, str] | None = None,
     ) -> list[tuple[Zone, AnchorRuntime, AnchorRuntime, object | None]] | str:
         if source is target:
             return "Source and target are the same node."
@@ -197,16 +224,26 @@ class GraphScene(QGraphicsScene):
         if not dst_zone_names:
             return "Target has no zone."
 
-        # Same-zone road — pick any zone owned by both.
-        for zone in variant.zones:
-            if zone.name in src_zone_names and zone.name in dst_zone_names:
-                sa = _anchor_for_in_zone(source.model_target, zone, template)
-                da = _anchor_for_in_zone(target.model_target, zone, template)
-                if sa is None or da is None:
-                    continue
-                return [(zone, sa, da, None)]
+        # Prefer the zone the user actually clicked when the underlying object
+        # is reachable from multiple zones (e.g. a bundle ContentItem rendered
+        # under both Red-A and Red-B because both reference mandatory_content_red).
+        src_pref = getattr(source, "owning_zone_name", None)
+        dst_pref = getattr(target, "owning_zone_name", None)
+
+        same_zone_order = _preferred_zone_order(
+            variant, src_zone_names & dst_zone_names, (src_pref, dst_pref)
+        )
+        for zone in same_zone_order:
+            sa = _anchor_for_in_zone(source.model_target, zone, template, pending_names)
+            da = _anchor_for_in_zone(target.model_target, zone, template, pending_names)
+            if sa is None or da is None:
+                continue
+            return [(zone, sa, da, None)]
 
         # Bridge through a connection. Skip proximity — they aren't road-routable.
+        # When several connections would work, prefer ones whose endpoints match
+        # the clicked nodes' owning zones.
+        candidates: list[tuple[int, object, Zone, Zone]] = []
         for conn in variant.connections:
             if conn.connectionType == ConnectionType.PROXIMITY:
                 continue
@@ -222,8 +259,16 @@ class GraphScene(QGraphicsScene):
                 zone_a, zone_b = b_zone, a_zone
             else:
                 continue
-            sa = _anchor_for_in_zone(source.model_target, zone_a, template)
-            da = _anchor_for_in_zone(target.model_target, zone_b, template)
+            score = 0
+            if src_pref == zone_a.name:
+                score += 2
+            if dst_pref == zone_b.name:
+                score += 2
+            candidates.append((-score, conn, zone_a, zone_b))
+
+        for _score, conn, zone_a, zone_b in sorted(candidates, key=lambda c: c[0]):
+            sa = _anchor_for_in_zone(source.model_target, zone_a, template, pending_names)
+            da = _anchor_for_in_zone(target.model_target, zone_b, template, pending_names)
             if sa is None or da is None:
                 continue
             conn_anchor = AnchorRuntime(type="Connection", args=[conn.name])
@@ -542,6 +587,27 @@ def _zone_by_name(name: str, variant: Variant) -> Zone | None:
     return None
 
 
+def _preferred_zone_order(
+    variant: Variant, candidate_names: set[str], hints: tuple[str | None, ...]
+) -> list[Zone]:
+    """Return the zones in `candidate_names` ordered so any hint matches come
+    first. Used to pick which zone owns a same-zone road when both endpoints
+    are reachable from several zones."""
+    seen: set[str] = set()
+    ordered: list[Zone] = []
+    for hint in hints:
+        if hint and hint in candidate_names and hint not in seen:
+            zone = _zone_by_name(hint, variant)
+            if zone is not None:
+                ordered.append(zone)
+                seen.add(hint)
+    for zone in variant.zones:
+        if zone.name in candidate_names and zone.name not in seen:
+            ordered.append(zone)
+            seen.add(zone.name)
+    return ordered
+
+
 def _zones_containing_node(target: object, variant: Variant, template: object) -> set[str]:
     """Return the names of zones in which this model object can act as a road endpoint."""
     if isinstance(target, _MAIN_OBJECT_TYPES):
@@ -563,7 +629,12 @@ def _zones_containing_node(target: object, variant: Variant, template: object) -
     return set()
 
 
-def _anchor_for_in_zone(target: object, zone: Zone, template: object) -> AnchorRuntime | None:
+def _anchor_for_in_zone(
+    target: object,
+    zone: Zone,
+    template: object,
+    pending_names: dict[int, str] | None = None,
+) -> AnchorRuntime | None:
     if isinstance(target, _MAIN_OBJECT_TYPES):
         for i, mo in enumerate(zone.mainObjects):
             if mo is target:
@@ -574,16 +645,33 @@ def _anchor_for_in_zone(target: object, zone: Zone, template: object) -> AnchorR
             return None
         return AnchorRuntime(type="Connection", args=[target.name])
     if isinstance(target, ContentItemRuntime):
-        if target.name is None:
+        name = target.name
+        if name is None and pending_names is not None:
+            name = pending_names.get(id(target))
+        if name is None:
             return None
         # Confirm the bundle containing `target` is actually referenced by this zone.
         for bundle in template.mandatoryContent:  # type: ignore[attr-defined]
             if any(ci is target for ci in bundle.content):
                 if bundle.name in (zone.mandatoryContent or []):
-                    return AnchorRuntime(type="MandatoryContent", args=[target.name])
+                    return AnchorRuntime(type="MandatoryContent", args=[name])
                 return None
         return None
     return None
+
+
+def _unique_content_item_name(item: ContentItemRuntime, used: set[str]) -> str:
+    """Synthesize a unique `name_<sid>` (or `name_<sid>_N`) for `item` that
+    doesn't collide with `used`. Caller is expected to add the result back
+    into `used` if naming multiple items in the same batch."""
+    base_sid = getattr(item, "sid", None) or "unnamed"
+    base = f"name_{base_sid}"
+    if base not in used:
+        return base
+    i = 2
+    while f"{base}_{i}" in used:
+        i += 1
+    return f"{base}_{i}"
 
 
 def _content_anchor_refs(zone: Zone) -> set[str]:
@@ -640,35 +728,40 @@ def _content_node_for(
     glyph = None
     if icon is None and item.sid:
         glyph = item.sid[:1].upper()
-    return ObjectNode(item, label, icon=icon, fill=QColor("#3d3a2f"), glyph=glyph)
+    return ObjectNode(
+        item, label, icon=icon, fill=QColor("#3d3a2f"), glyph=glyph,
+        owning_zone_name=zone.name,
+    )
 
 
 def _object_node_for(mo: object, zone: Zone, index: int) -> ObjectNode:
     from PySide6.QtGui import QColor
 
     label_prefix = f"'{zone.name}' / MainObject[{index}]"
+    owner = zone.name
     if isinstance(mo, SpawnObject):
         spawn = getattr(mo, "spawn", None) or getattr(mo, "owner", None)
         fill = _PLAYER_COLOR.get(spawn, QColor("#a358cf")) if spawn else QColor("#888")
         glyph = _player_glyph(spawn)
         return ObjectNode(mo, f"{label_prefix} — Spawn ({spawn or 'unassigned'})",
-                          fill=fill, glyph=glyph)
+                          fill=fill, glyph=glyph, owning_zone_name=owner)
     if isinstance(mo, CityObject):
         icon = _faction_icon(mo)
         factions = ", ".join(mo.factions or []) or "any faction"
         return ObjectNode(mo, f"{label_prefix} — City ({factions})",
-                          icon=icon, fill=QColor("#3c4252"), glyph="C" if icon is None else None)
+                          icon=icon, fill=QColor("#3c4252"), glyph="C" if icon is None else None,
+                          owning_zone_name=owner)
     if isinstance(mo, GladiatorArenaObject):
         return ObjectNode(mo, f"{label_prefix} — Gladiator Arena",
-                          fill=QColor("#5a2f2f"), glyph="G")
+                          fill=QColor("#5a2f2f"), glyph="G", owning_zone_name=owner)
     if isinstance(mo, EmptyMainObject):
         return ObjectNode(mo, f"{label_prefix} — (empty)",
-                          fill=QColor("#3a3a3e"), glyph="·")
+                          fill=QColor("#3a3a3e"), glyph="·", owning_zone_name=owner)
     # AbandonedOutpostObject + fallback for any future _MainObjectBase subtype.
     kind = getattr(getattr(mo, "type", None), "value", "Object")
     glyph = "A" if kind == MainObjectType.ABANDONED_OUTPOST.value else "?"
     return ObjectNode(mo, f"{label_prefix} — {kind}",
-                      fill=QColor("#5a4a2a"), glyph=glyph)
+                      fill=QColor("#5a4a2a"), glyph=glyph, owning_zone_name=owner)
 
 
 def _faction_icon(mo: CityObject) -> QIcon | None:
