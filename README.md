@@ -102,6 +102,15 @@ Or from inside the editor: **Tools -> Rebuild Catalog from game install...** Ext
 - **Delete** - select zones or connections on the canvas and press `Delete`. Removing a zone also removes any connections that referenced it, in a single undo step.
 - All edits go through a `QUndoStack` - `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo, per open template.
 
+### Road graph view (`Ctrl+R`)
+Toggle the road icon (next to Validate) to swap the zone graph for a road graph. Each MainObject in each zone becomes a node (faction icon for cities, player-coloured circle for spawns, type glyph for the rest), each non-proximity connection becomes a small diamond at the midpoint between the two zones it links, and every Road in `zone.roads` is drawn between the resolved endpoints in road-type colour (stone = light grey, dirt = warm brown).
+
+![](./readme-images/16-road-editor.png)
+
+Two extra toolbar toggles light up while road view is on:
+- **Show All Bundle Objects** (`Ctrl+Shift+R`) - also draws every named `ContentItem` from the bundles the zone's `mandatoryContent` references (mana wells, mines, named pandora boxes, etc.), with their catalog thumbnails. Without it only items actually referenced by some road anchor are shown.
+- **Add Road** (`Ctrl+Alt+R`) - click any two nodes (object, connection, or bundle item) and a road is synthesised in the right zone. If the endpoints are in different zones, the editor picks the linking non-proximity connection, adds two roads (one per zone) routed through it, and flips the connection's `has road` checkbox - all under one undo step. Unnamed bundle items get a synthesized `name_<sid>` so the road anchor can resolve them. `Delete` removes selected roads.
+
 ### Inspector (right dock)
 Click any zone, connection, layout, bundle, count-limit, content item, or main object to see all its fields. Lists and embedded objects support drill-in navigation with a back button. Reference fields (SID, content list, content pool, biome, faction, etc.) use editable autocomplete dropdowns backed by the catalog - dropdowns are narrowed per-field to the right SID kind (artifact, spell, resource, interactable, ...), and rich items show their in-game thumbnail next to the name.
 
