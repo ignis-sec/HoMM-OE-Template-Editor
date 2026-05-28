@@ -1,7 +1,17 @@
 
-VERSION = "v0.1.0"
+VERSION = "v0.1.1"
 CHANGELOG = """
 <h1 id="changelog">Changelog</h1>
+<h1 id="v0-1-1">v0.1.1</h1>
+<h2 id="new-features">New Features</h2>
+<ul>
+<li>Added an option to rebuild road layout from current zone layout (graph view only)</li>
+</ul>
+<h2 id="bugfixes">Bugfixes</h2>
+<ul>
+<li>Crossroads are now displayed correctly in the road editor.</li>
+</ul>
+<hr>
 <h1 id="v0-1-0-significant-changes">v0.1.0 - Significant Changes</h1>
 <h2 id="new-features">New Features</h2>
 <ul>

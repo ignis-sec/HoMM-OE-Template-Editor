@@ -221,6 +221,16 @@ class MainWindow(QMainWindow):
         )
         self.action_add_road.toggled.connect(self._on_toggle_add_road)
 
+        self.action_reset_road_layout = QAction(
+            self._icons.get("reset_road_layout"), "Reset Road &Layout", self
+        )
+        self.action_reset_road_layout.setEnabled(False)
+        self.action_reset_road_layout.setToolTip(
+            "Recreate the road graph layout from the current zone positions, "
+            "discarding any drag positioning in road view"
+        )
+        self.action_reset_road_layout.triggered.connect(self._on_reset_road_layout)
+
         self.action_about = QAction(self._icons.get("about"), "&About HoMM:OE Template Editor", self)
         self.action_about.triggered.connect(self._show_about)
 
@@ -311,6 +321,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.action_show_roads)
         toolbar.addAction(self.action_show_all_objects)
         toolbar.addAction(self.action_add_road)
+        toolbar.addAction(self.action_reset_road_layout)
 
     def _build_docks(self) -> None:
         self._library_dock = self._make_dock(
@@ -705,6 +716,7 @@ class MainWindow(QMainWindow):
     def _on_toggle_show_roads(self, on: bool) -> None:
         self.action_show_all_objects.setEnabled(on)
         self.action_add_road.setEnabled(on)
+        self.action_reset_road_layout.setEnabled(on)
         if not on:
             if self.action_show_all_objects.isChecked():
                 self.action_show_all_objects.setChecked(False)
@@ -720,6 +732,28 @@ class MainWindow(QMainWindow):
     def _on_toggle_add_road(self, on: bool) -> None:
         if self._current_view is not None:
             self._current_view.set_road_mode(on)
+
+    def _on_reset_road_layout(self) -> None:
+        if self._current_view is None:
+            return
+        scene = self._current_view.scene()
+        regen = getattr(scene, "regenerate_road_layout", None)
+        if not callable(regen):
+            return
+        answer = QMessageBox.question(
+            self,
+            "Reset road layout",
+            "Discard the current road graph positioning for this template and "
+            "re-derive node positions from the zone graph?\n\nZone positions "
+            "are not affected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        _log.info("road layout reset from zone view for current document")
+        regen()
+        self.statusBar().showMessage("Road graph layout reset from zones", 3000)
 
     def _on_road_failed(self, message: str) -> None:
         _log.info("Add Road tool rejected: %s", message)
